@@ -97,6 +97,31 @@ static void test_build_text_too_small(void) {
     CHECK(wsp_build_text(buf, sizeof buf, "hello world") == -1);
 }
 
+static void test_build_uri(void) {
+    wsp_config_t cfg = {
+        .host = "192.168.1.50", .port = 8000, .secure = false,
+        .stt_engine = "whisper_mlx", .tts_engine = "vieneu",
+        .language = "vi", .sample_rate = 16000, .output_sample_rate = 24000,
+    };
+    char buf[512];
+    int n = wsp_build_uri(buf, sizeof buf, &cfg);
+    CHECK(n > 0);
+    CHECK(strcmp(buf,
+        "ws://192.168.1.50:8000/v1/conversation/stream"
+        "?stt_engine=whisper_mlx&tts_engine=vieneu&language=vi"
+        "&sample_rate=16000&audio_codec=opus&output=audio,text"
+        "&audio_out=opus&output_sample_rate=24000") == 0);
+}
+
+static void test_build_uri_secure(void) {
+    wsp_config_t cfg = { .host = "h", .port = 443, .secure = true,
+        .stt_engine = "whisper_mlx", .tts_engine = "vieneu", .language = "vi",
+        .sample_rate = 16000, .output_sample_rate = 24000 };
+    char buf[512];
+    CHECK(wsp_build_uri(buf, sizeof buf, &cfg) > 0);
+    CHECK(strncmp(buf, "wss://h:443/", 12) == 0);
+}
+
 int main(void) {
     test_parse_session_started();
     test_parse_audio_start();
@@ -108,6 +133,8 @@ int main(void) {
     test_build_too_small();
     test_build_text_control_char();
     test_build_text_too_small();
+    test_build_uri();
+    test_build_uri_secure();
     if (failures) { printf("%d FAILURES\n", failures); return 1; }
     printf("ALL PASS\n");
     return 0;
