@@ -1,0 +1,10 @@
+# Host test build artifacts
+test/test_ws_protocol
+test/*.dSYM/
+
+# ESP-IDF build output
+build/
+sdkconfig
+sdkconfig.old
+managed_components/
+dependencies.lock

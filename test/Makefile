@@ -7,4 +7,4 @@ test: test_ws_protocol
 test_ws_protocol: test_ws_protocol.c $(SRC)
 	$(CC) $(CFLAGS) -o $@ $^
 clean:
-	rm -f test_ws_protocol
+	rm -rf test_ws_protocol test_ws_protocol.dSYM

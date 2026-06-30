@@ -22,6 +22,7 @@ static const char *find_value(const char *json, const char *key) {
 
 // Copy string value for key into out (unescaping common escapes). out is "" if absent.
 static void get_string(const char *json, const char *key, char *out, size_t cap) {
+    if (cap == 0) return;
     out[0] = '\0';
     const char *p = find_value(json, key);
     if (!p || *p != '"') return;
