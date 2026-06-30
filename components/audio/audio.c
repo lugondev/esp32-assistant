@@ -44,6 +44,10 @@ esp_err_t audio_init(void) {
     audio_codec_i2c_cfg_t ci = { .port = I2C_NUM_0, .addr = CONFIG_AA_ES8311_ADDR, .bus_handle = i2c };
     const audio_codec_ctrl_if_t *ctrl_if = audio_codec_new_i2c_ctrl(&ci);
     const audio_codec_gpio_if_t *gpio_if = audio_codec_new_gpio();
+    if (!data_if || !ctrl_if || !gpio_if) {
+        ESP_LOGE(TAG, "codec interface alloc failed");
+        return ESP_FAIL;
+    }
 
     es8311_codec_cfg_t es = {
         .ctrl_if = ctrl_if, .gpio_if = gpio_if,
@@ -51,9 +55,11 @@ esp_err_t audio_init(void) {
         .pa_pin = -1, .use_mclk = true,
     };
     const audio_codec_if_t *codec_if = es8311_codec_new(&es);
+    if (!codec_if) { ESP_LOGE(TAG, "es8311_codec_new failed"); return ESP_FAIL; }
     esp_codec_dev_cfg_t dc = {
         .dev_type = ESP_CODEC_DEV_TYPE_IN_OUT, .codec_if = codec_if, .data_if = data_if };
     s_dev = esp_codec_dev_open(&dc);
+    if (!s_dev) { ESP_LOGE(TAG, "esp_codec_dev_open failed"); return ESP_FAIL; }
 
     esp_codec_dev_sample_info_t fs = {
         .bits_per_sample = 16, .channel = 1, .sample_rate = 16000 };
