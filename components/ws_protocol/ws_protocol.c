@@ -101,9 +101,11 @@ int wsp_parse_event(const char *json, wsp_event_t *out) {
 // Append src to buf at *o (cap total), JSON-escaping " \ and control chars.
 // Returns false on overflow.
 static bool append_escaped(char *buf, size_t cap, size_t *o, const char *src) {
+    static const char hex[] = "0123456789abcdef";
     for (; *src; src++) {
+        unsigned char ch = (unsigned char)*src;
         const char *esc = NULL;
-        switch (*src) {
+        switch (ch) {
             case '"':  esc = "\\\""; break;
             case '\\': esc = "\\\\"; break;
             case '\n': esc = "\\n";  break;
@@ -113,9 +115,15 @@ static bool append_escaped(char *buf, size_t cap, size_t *o, const char *src) {
         if (esc) {
             if (*o + 2 >= cap) return false;
             buf[(*o)++] = esc[0]; buf[(*o)++] = esc[1];
+        } else if (ch < 0x20) {
+            if (*o + 6 >= cap) return false;
+            buf[(*o)++] = '\\'; buf[(*o)++] = 'u';
+            buf[(*o)++] = '0';  buf[(*o)++] = '0';
+            buf[(*o)++] = hex[(ch >> 4) & 0xF];
+            buf[(*o)++] = hex[ch & 0xF];
         } else {
             if (*o + 1 >= cap) return false;
-            buf[(*o)++] = *src;
+            buf[(*o)++] = ch;
         }
     }
     return true;

@@ -84,6 +84,19 @@ static void test_build_too_small(void) {
     CHECK(wsp_build_control(buf, sizeof buf, "flush") == -1);
 }
 
+static void test_build_text_control_char(void) {
+    char buf[64];
+    const char text[] = {'a', '\x01', 'b', '\0'};
+    int n = wsp_build_text(buf, sizeof buf, text);
+    CHECK(n > 0);
+    CHECK(strcmp(buf, "{\"type\":\"text\",\"text\":\"a\\u0001b\"}") == 0);
+}
+
+static void test_build_text_too_small(void) {
+    char buf[8];
+    CHECK(wsp_build_text(buf, sizeof buf, "hello world") == -1);
+}
+
 int main(void) {
     test_parse_session_started();
     test_parse_audio_start();
@@ -93,6 +106,8 @@ int main(void) {
     test_build_control();
     test_build_text_escapes();
     test_build_too_small();
+    test_build_text_control_char();
+    test_build_text_too_small();
     if (failures) { printf("%d FAILURES\n", failures); return 1; }
     printf("ALL PASS\n");
     return 0;
