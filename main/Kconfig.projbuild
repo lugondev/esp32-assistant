@@ -1,0 +1,35 @@
+menu "Assistant configuration"
+
+config AA_WIFI_SSID
+    string "WiFi SSID"
+    default "myssid"
+
+config AA_WIFI_PASS
+    string "WiFi password"
+    default "mypassword"
+
+config AA_SERVER_HOST
+    string "Gateway host (IP or domain)"
+    default "192.168.1.50"
+
+config AA_SERVER_PORT
+    int "Gateway port"
+    default 8000
+
+config AA_SERVER_SECURE
+    bool "Use wss:// (TLS)"
+    default n
+
+config AA_STT_ENGINE
+    string "STT engine"
+    default "whisper_mlx"
+
+config AA_TTS_ENGINE
+    string "TTS engine"
+    default "vieneu"
+
+config AA_LANGUAGE
+    string "Language hint"
+    default "vi"
+
+endmenu
