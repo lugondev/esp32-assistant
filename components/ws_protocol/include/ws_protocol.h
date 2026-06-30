@@ -28,3 +28,10 @@ typedef struct {
 // Parse one server JSON text frame. Returns 0 on success (including unknown
 // event names -> WSP_EV_UNKNOWN), -1 if json is not valid JSON.
 int wsp_parse_event(const char *json, wsp_event_t *out);
+
+// Build a control message: {"type":"<type>"}. Returns length or -1 if too small.
+int wsp_build_control(char *buf, size_t buflen, const char *type);
+
+// Build a text message: {"type":"text","text":"<text>"} with JSON escaping.
+// Returns length or -1 if too small.
+int wsp_build_text(char *buf, size_t buflen, const char *text);

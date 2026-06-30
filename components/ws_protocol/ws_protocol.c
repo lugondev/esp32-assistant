@@ -97,3 +97,45 @@ int wsp_parse_event(const char *json, wsp_event_t *out) {
     }
     return 0;
 }
+
+// Append src to buf at *o (cap total), JSON-escaping " \ and control chars.
+// Returns false on overflow.
+static bool append_escaped(char *buf, size_t cap, size_t *o, const char *src) {
+    for (; *src; src++) {
+        const char *esc = NULL;
+        switch (*src) {
+            case '"':  esc = "\\\""; break;
+            case '\\': esc = "\\\\"; break;
+            case '\n': esc = "\\n";  break;
+            case '\t': esc = "\\t";  break;
+            case '\r': esc = "\\r";  break;
+        }
+        if (esc) {
+            if (*o + 2 >= cap) return false;
+            buf[(*o)++] = esc[0]; buf[(*o)++] = esc[1];
+        } else {
+            if (*o + 1 >= cap) return false;
+            buf[(*o)++] = *src;
+        }
+    }
+    return true;
+}
+
+int wsp_build_control(char *buf, size_t buflen, const char *type) {
+    int n = snprintf(buf, buflen, "{\"type\":\"%s\"}", type);
+    if (n < 0 || (size_t)n >= buflen) return -1;
+    return n;
+}
+
+int wsp_build_text(char *buf, size_t buflen, const char *text) {
+    const char *prefix = "{\"type\":\"text\",\"text\":\"";
+    const char *suffix = "\"}";
+    size_t o = 0;
+    size_t plen = strlen(prefix), slen = strlen(suffix);
+    if (plen + slen >= buflen) return -1;
+    memcpy(buf, prefix, plen); o = plen;
+    if (!append_escaped(buf, buflen - slen, &o, text)) return -1;
+    memcpy(buf + o, suffix, slen); o += slen;
+    buf[o] = '\0';
+    return (int)o;
+}

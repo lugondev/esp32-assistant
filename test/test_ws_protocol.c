@@ -65,12 +65,34 @@ static void test_parse_error_and_unknown(void) {
     CHECK(wsp_parse_event("not json", &e) == -1);
 }
 
+static void test_build_control(void) {
+    char buf[64];
+    int n = wsp_build_control(buf, sizeof buf, "flush");
+    CHECK(n > 0);
+    CHECK(strcmp(buf, "{\"type\":\"flush\"}") == 0);
+}
+
+static void test_build_text_escapes(void) {
+    char buf[128];
+    int n = wsp_build_text(buf, sizeof buf, "say \"hi\"");
+    CHECK(n > 0);
+    CHECK(strcmp(buf, "{\"type\":\"text\",\"text\":\"say \\\"hi\\\"\"}") == 0);
+}
+
+static void test_build_too_small(void) {
+    char buf[4];
+    CHECK(wsp_build_control(buf, sizeof buf, "flush") == -1);
+}
+
 int main(void) {
     test_parse_session_started();
     test_parse_audio_start();
     test_parse_user_transcript();
     test_parse_simple_events();
     test_parse_error_and_unknown();
+    test_build_control();
+    test_build_text_escapes();
+    test_build_too_small();
     if (failures) { printf("%d FAILURES\n", failures); return 1; }
     printf("ALL PASS\n");
     return 0;
