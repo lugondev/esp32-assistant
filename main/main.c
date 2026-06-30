@@ -49,7 +49,7 @@ static void mic_task(void *arg) {
     uint8_t opus[OPUS_MAX_PACKET];
     for (;;) {
         int got = audio_mic_read(pcm, OPUS_UP_SAMPLES);   // keeps I2S draining always
-        if (got != OPUS_UP_SAMPLES) continue;
+        if (got != OPUS_UP_SAMPLES) { vTaskDelay(pdMS_TO_TICKS(10)); continue; }
         if (s_state != APP_LISTENING || !ws_client_connected()) continue;  // half-duplex
         int n = opus_codec_encode(pcm, opus, sizeof opus);
         if (n > 0) ws_client_send_audio(opus, n);
