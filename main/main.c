@@ -7,10 +7,12 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include <string.h>
+#include <stdlib.h>
 
 static const char *TAG = "app";
 
 typedef enum { APP_CONNECTING, APP_LISTENING, APP_SPEAKING } app_state_t;
+// Single-writer: only the ws event callback writes s_state; mic_task/spk_task read it.
 static volatile app_state_t s_state = APP_CONNECTING;
 
 // jitter buffer: queue of heap-allocated Opus packets
