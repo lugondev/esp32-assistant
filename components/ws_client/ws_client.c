@@ -17,11 +17,14 @@ static void on_ws(void *arg, esp_event_base_t base, int32_t id, void *data) {
         s_connected = true; ESP_LOGI(TAG, "connected"); break;
     case WEBSOCKET_EVENT_DISCONNECTED:
         s_connected = false; ESP_LOGW(TAG, "disconnected"); break;
-    case WEBSOCKET_EVENT_DATA:
-        if (d->op_code == 0x02) {            // binary
+    case WEBSOCKET_EVENT_DATA: {
+        // Only act on a complete frame delivered in a single event (no fragmentation).
+        bool complete = (d->payload_offset == 0) && (d->data_len == d->payload_len);
+        if (!complete) break;
+        if (d->op_code == 0x02) {            // binary = one full Opus packet
             if (s_on_audio && d->data_len > 0)
                 s_on_audio((const uint8_t *)d->data_ptr, d->data_len);
-        } else if (d->op_code == 0x01) {     // text
+        } else if (d->op_code == 0x01) {     // text = one JSON event
             char buf[512];
             int n = d->data_len < (int)sizeof(buf) - 1 ? d->data_len : (int)sizeof(buf) - 1;
             memcpy(buf, d->data_ptr, n); buf[n] = '\0';
@@ -29,6 +32,7 @@ static void on_ws(void *arg, esp_event_base_t base, int32_t id, void *data) {
             if (wsp_parse_event(buf, &ev) == 0 && s_on_event) s_on_event(&ev);
         }
         break;
+    }
     default: break;
     }
 }
@@ -44,6 +48,7 @@ esp_err_t ws_client_start(const wsp_config_t *cfg,
         .buffer_size = 2048,
     };
     s_client = esp_websocket_client_init(&wc);
+    if (!s_client) return ESP_ERR_NO_MEM;
     esp_websocket_register_events(s_client, WEBSOCKET_EVENT_ANY, on_ws, NULL);
     return esp_websocket_client_start(s_client);
 }
