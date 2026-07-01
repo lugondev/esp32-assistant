@@ -9,6 +9,11 @@
 #include <string.h>
 #include <stdlib.h>
 
+// Bool Kconfig options are undefined (not 0) when unset — provide a fallback.
+#ifndef CONFIG_AA_SERVER_SECURE
+#define CONFIG_AA_SERVER_SECURE 0
+#endif
+
 static const char *TAG = "app";
 
 typedef enum { APP_CONNECTING, APP_LISTENING, APP_SPEAKING } app_state_t;

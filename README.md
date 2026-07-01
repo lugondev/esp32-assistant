@@ -69,8 +69,8 @@ your specific board** before building.
 idf.py build flash monitor
 ```
 
-On first build, `idf.py reconfigure` resolves the managed components (`espressif/opus`,
-`espressif/esp_codec_dev`). This requires an internet connection.
+On first build, `idf.py reconfigure` resolves the managed components (`78/esp-opus`,
+`espressif/esp_codec_dev`, `espressif/esp_websocket_client`). This requires an internet connection.
 
 Expected serial output after a successful boot:
 
@@ -126,7 +126,7 @@ For the full protocol specification, see
 | `ws_protocol` | URL/JSON builder and parser for the gateway protocol; **dependency-free** (plain C, no ESP-IDF) |
 | `ws_client` | Thin wrapper around `esp_websocket_client`; dispatches binary audio frames and JSON events to callbacks |
 | `audio` | ES8311 codec init via `esp_codec_dev`, I2S channel configuration, `audio_mic_read` / `audio_spk_write` |
-| `opus_codec` | Opus encoder (16 kHz, 60 ms, 1 ch) and decoder (16 kHz, 60 ms, 1 ch); wraps `espressif/opus` |
+| `opus_codec` | Opus encoder (16 kHz, 60 ms, 1 ch) and decoder (16 kHz, 60 ms, 1 ch); wraps `78/esp-opus` |
 | `main` | Application state machine (CONNECTING → LISTENING ↔ SPEAKING), jitter buffer (FreeRTOS queue of heap Opus packets), `mic_task` and `spk_task` |
 
 ---
@@ -148,10 +148,10 @@ system C compiler (`cc`) are needed.
 
 ## Known limitations
 
-**Opus managed component:** `idf_component.yml` requests `espressif/opus: "*"`. If the
-Espressif component registry is unreachable or the package is not found, substitute
-`chmorgan/esp-libopus` in the YAML — the include header is `opus.h` either way, so no source
-changes are needed.
+**Opus managed component:** `idf_component.yml` requests `78/esp-opus: "*"` — the libopus
+port from the xiaozhi author, which exposes the standard `opus.h` API. This is verified to
+resolve and build against ESP-IDF v5.4. (`espressif/opus` and `chmorgan/esp-libopus` do NOT
+exist in the registry.)
 
 **Single 16 kHz I2S clock:** both microphone capture (uplink) and speaker playback (downlink) now
 run at 16 kHz. The I2S bus is initialised once at 16 kHz and the ES8311 codec uses that clock

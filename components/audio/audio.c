@@ -58,15 +58,13 @@ esp_err_t audio_init(void) {
     if (!codec_if) { ESP_LOGE(TAG, "es8311_codec_new failed"); return ESP_FAIL; }
     esp_codec_dev_cfg_t dc = {
         .dev_type = ESP_CODEC_DEV_TYPE_IN_OUT, .codec_if = codec_if, .data_if = data_if };
-    s_dev = esp_codec_dev_open(&dc);
-    if (!s_dev) { ESP_LOGE(TAG, "esp_codec_dev_open failed"); return ESP_FAIL; }
+    s_dev = esp_codec_dev_new(&dc);
+    if (!s_dev) { ESP_LOGE(TAG, "esp_codec_dev_new failed"); return ESP_FAIL; }
 
+    // Single 16 kHz mono format for both capture and playback (half-duplex).
     esp_codec_dev_sample_info_t fs = {
         .bits_per_sample = 16, .channel = 1, .sample_rate = 16000 };
-    ESP_ERROR_CHECK(esp_codec_dev_open_input(s_dev, &fs));
-    esp_codec_dev_sample_info_t fs_out = {
-        .bits_per_sample = 16, .channel = 1, .sample_rate = 16000 };
-    ESP_ERROR_CHECK(esp_codec_dev_open_output(s_dev, &fs_out));
+    ESP_ERROR_CHECK(esp_codec_dev_open(s_dev, &fs));
     esp_codec_dev_set_out_vol(s_dev, 80);
     esp_codec_dev_set_in_gain(s_dev, 30.0);
     ESP_LOGI(TAG, "audio ready");

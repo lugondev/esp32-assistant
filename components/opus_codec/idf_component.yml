@@ -1,2 +1,2 @@
 dependencies:
-  espressif/opus: "*"
+  "78/esp-opus": "*"
