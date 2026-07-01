@@ -5,7 +5,7 @@ terminal for the gateway in this monorepo.
 
 The device is a **thin client**: it captures microphone audio, compresses it with Opus at 16 kHz,
 and streams the frames to the gateway over WebSocket. The gateway handles speech recognition,
-language-model inference, and text-to-speech synthesis, then streams Opus audio back at 24 kHz
+language-model inference, and text-to-speech synthesis, then streams Opus audio back at 16 kHz
 for the speaker. No STT, LLM, or TTS runs on the device.
 
 Operation is **hands-free** (the server detects speech boundaries with VAD) and **half-duplex**
@@ -103,13 +103,13 @@ The firmware connects to:
 ws[s]://host:port/v1/conversation/stream
     ?stt_engine=…&tts_engine=…&language=…
     &sample_rate=16000&audio_codec=opus
-    &output=audio,text&audio_out=opus&output_sample_rate=24000
+    &output=audio,text&audio_out=opus&output_sample_rate=16000
 ```
 
 **Uplink (device → gateway):** raw Opus binary frames, one WebSocket binary message per 60 ms
 frame (960 samples at 16 kHz).
 
-**Downlink (gateway → device):** Opus binary frames at 24 kHz / 60 ms (1440 samples), and JSON
+**Downlink (gateway → device):** Opus binary frames at 16 kHz / 60 ms (960 samples), and JSON
 text frames carrying lifecycle events (`session_started`, `speech_start`, `speech_end`,
 `audio_start`, `audio_end`, `turn_done`, `aborted`, `user_transcript`, `response_text`, `error`).
 
@@ -126,7 +126,7 @@ For the full protocol specification, see
 | `ws_protocol` | URL/JSON builder and parser for the gateway protocol; **dependency-free** (plain C, no ESP-IDF) |
 | `ws_client` | Thin wrapper around `esp_websocket_client`; dispatches binary audio frames and JSON events to callbacks |
 | `audio` | ES8311 codec init via `esp_codec_dev`, I2S channel configuration, `audio_mic_read` / `audio_spk_write` |
-| `opus_codec` | Opus encoder (16 kHz, 60 ms, 1 ch) and decoder (24 kHz, 60 ms, 1 ch); wraps `espressif/opus` |
+| `opus_codec` | Opus encoder (16 kHz, 60 ms, 1 ch) and decoder (16 kHz, 60 ms, 1 ch); wraps `espressif/opus` |
 | `main` | Application state machine (CONNECTING → LISTENING ↔ SPEAKING), jitter buffer (FreeRTOS queue of heap Opus packets), `mic_task` and `spk_task` |
 
 ---
@@ -153,12 +153,10 @@ Espressif component registry is unreachable or the package is not found, substit
 `chmorgan/esp-libopus` in the YAML — the include header is `opus.h` either way, so no source
 changes are needed.
 
-**I2S single-bus dual-rate:** `audio.c` initialises the I2S bus at 16 kHz and the ES8311 codec
-uses that clock for both record and playback. The 24 kHz downlink is decoded by Opus into
-1440-sample PCM and written to the same 16 kHz bus; some versions of `esp_codec_dev` will
-reject a per-write sample-rate mismatch. If you see codec errors at playback time, set both
-encode and decode rates equal in `Kconfig` and resample in software, or reconfigure the I2S
-channel between phases. **Verify on your hardware before deploying.**
+**Single 16 kHz I2S clock:** both microphone capture (uplink) and speaker playback (downlink) now
+run at 16 kHz. The I2S bus is initialised once at 16 kHz and the ES8311 codec uses that clock
+for both directions. The previous dual-rate limitation (16 kHz record / 24 kHz playback on one
+bus) no longer applies.
 
 **`ws_protocol` JSON parser:** the parser is a minimal key-scanner tuned to the gateway's flat
 event objects, not a general-purpose JSON parser. It assumes a trusted gateway — malformed or

@@ -22,7 +22,7 @@ int opus_codec_encode(const int16_t *pcm960, uint8_t *out, int out_cap) {
     return n < 0 ? -1 : n;
 }
 
-int opus_codec_decode(const uint8_t *pkt, int pkt_len, int16_t *pcm1440) {
-    int n = opus_decode(s_dec, pkt, pkt_len, pcm1440, OPUS_DOWN_SAMPLES, 0);
+int opus_codec_decode(const uint8_t *pkt, int pkt_len, int16_t *pcm_out) {
+    int n = opus_decode(s_dec, pkt, pkt_len, pcm_out, OPUS_DOWN_SAMPLES, 0);
     return n < 0 ? -1 : n;
 }

@@ -65,7 +65,7 @@ esp_err_t audio_init(void) {
         .bits_per_sample = 16, .channel = 1, .sample_rate = 16000 };
     ESP_ERROR_CHECK(esp_codec_dev_open_input(s_dev, &fs));
     esp_codec_dev_sample_info_t fs_out = {
-        .bits_per_sample = 16, .channel = 1, .sample_rate = 24000 };
+        .bits_per_sample = 16, .channel = 1, .sample_rate = 16000 };
     ESP_ERROR_CHECK(esp_codec_dev_open_output(s_dev, &fs_out));
     esp_codec_dev_set_out_vol(s_dev, 80);
     esp_codec_dev_set_in_gain(s_dev, 30.0);
