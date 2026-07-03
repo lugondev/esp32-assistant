@@ -32,6 +32,15 @@ config AA_LANGUAGE
     string "Language hint"
     default "vi"
 
+config AA_PROFILE
+    string "Chatllm profile name (optional)"
+    default ""
+    help
+        Named profile created on the gateway via POST /v1/profiles, bundling LLM
+        model/system prompt/TTS/MCP tools/memory. When set, sent as &profile=<name>
+        on the WS URL and overrides the server's .env LLM defaults for this device.
+        Leave empty to omit (device uses AA_STT_ENGINE/AA_TTS_ENGINE/AA_LANGUAGE only).
+
 config AA_I2C_SDA
     int "ES8311 I2C SDA gpio"
     default 1

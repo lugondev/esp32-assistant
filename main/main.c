@@ -87,6 +87,7 @@ void app_main(void) {
         .secure = CONFIG_AA_SERVER_SECURE,
         .stt_engine = CONFIG_AA_STT_ENGINE, .tts_engine = CONFIG_AA_TTS_ENGINE,
         .language = CONFIG_AA_LANGUAGE, .sample_rate = 16000, .output_sample_rate = 16000,
+        .profile = CONFIG_AA_PROFILE,
     };
     ESP_ERROR_CHECK(ws_client_start(&cfg, on_event, on_audio));
 

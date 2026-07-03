@@ -158,5 +158,11 @@ int wsp_build_uri(char *buf, size_t buflen, const wsp_config_t *cfg) {
         cfg->stt_engine, cfg->tts_engine, cfg->language,
         cfg->sample_rate, cfg->output_sample_rate);
     if (n < 0 || (size_t)n >= buflen) return -1;
+
+    if (cfg->profile && cfg->profile[0]) {
+        int pn = snprintf(buf + n, buflen - (size_t)n, "&profile=%s", cfg->profile);
+        if (pn < 0 || (size_t)(n + pn) >= buflen) return -1;
+        n += pn;
+    }
     return n;
 }

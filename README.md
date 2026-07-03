@@ -49,6 +49,7 @@ Navigate to **"Assistant configuration"** and set:
 | STT engine | `AA_STT_ENGINE` | `whisper_mlx` | Must match server |
 | TTS engine | `AA_TTS_ENGINE` | `vieneu` | Must match server |
 | Language hint | `AA_LANGUAGE` | `vi` | BCP-47 code |
+| Chatllm profile (optional) | `AA_PROFILE` | *(empty)* | Named profile from `POST /v1/profiles` — bundles LLM model/system prompt/TTS/MCP/memory |
 | ES8311 I2C SDA | `AA_I2C_SDA` | 1 | |
 | ES8311 I2C SCL | `AA_I2C_SCL` | 2 | |
 | I2S MCLK | `AA_I2S_MCLK` | 16 | |
@@ -104,6 +105,7 @@ ws[s]://host:port/v1/conversation/stream
     ?stt_engine=…&tts_engine=…&language=…
     &sample_rate=16000&audio_codec=opus
     &output=audio,text&audio_out=opus&output_sample_rate=16000
+    [&profile=…]
 ```
 
 **Uplink (device → gateway):** raw Opus binary frames, one WebSocket binary message per 60 ms
@@ -120,13 +122,12 @@ For the full protocol specification, see
 tools/memory into a named **profile** (`POST /v1/profiles`) and activate it with
 `?profile=<name>` on the WS URL — see
 [`../docs/device-integration.md`](../docs/device-integration.md#1a-profiles-connect-a-device-as-a-preset-chatllm-persona).
-This firmware does **not yet** expose an `AA_PROFILE` menuconfig option, so it always
-sends `stt_engine`/`tts_engine`/`language` from the Kconfig values above and never a
-`profile` param. To have an ESP32 device behave like a specific profile today, either
-make that profile's LLM/TTS settings the server's `.env` defaults, or use the
-`AA_STT_ENGINE`/`AA_TTS_ENGINE`/`AA_LANGUAGE` options to match it manually. The
-Raspberry Pi clients (`scripts/rpi_voice_client.py --profile <name>` and
-`agent-assistant/`'s `session.profile` in `config.yaml`) already support `?profile=`.
+Set **`AA_PROFILE`** in `menuconfig` → "Assistant configuration" (empty by default = no
+profile sent). When set, it's appended as `&profile=<name>`; `AA_STT_ENGINE`/
+`AA_LANGUAGE` still apply unless the profile overrides them server-side (see the
+precedence rules in the device-integration doc linked above). The Raspberry Pi clients
+(`scripts/rpi_voice_client.py --profile <name>` and `agent-assistant/`'s
+`session.profile` in `config.yaml`) support the same param.
 
 ---
 

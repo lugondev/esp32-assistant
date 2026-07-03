@@ -34,6 +34,7 @@ typedef struct {
     const char *language;
     int sample_rate;
     int output_sample_rate;
+    const char *profile;  // optional named chatllm profile (POST /v1/profiles); NULL/"" = omit
 } wsp_config_t;
 
 // Parse one server JSON text frame. Returns 0 on success (including unknown
@@ -49,5 +50,6 @@ int wsp_build_text(char *buf, size_t buflen, const char *text);
 
 // Build connect URI: ws://host:port/v1/conversation/stream?stt_engine=…&tts_engine=…&language=…
 // &sample_rate=…&audio_codec=opus&output=audio,text&audio_out=opus&output_sample_rate=…
-// (wss:// when cfg->secure). Returns length or -1 if truncated.
+// (wss:// when cfg->secure). Appends &profile=<cfg->profile> when non-NULL/non-empty.
+// Returns length or -1 if truncated.
 int wsp_build_uri(char *buf, size_t buflen, const wsp_config_t *cfg);
