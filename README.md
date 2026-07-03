@@ -116,6 +116,18 @@ text frames carrying lifecycle events (`session_started`, `speech_start`, `speec
 For the full protocol specification, see
 [`../agent-assistant/integration.md`](../agent-assistant/integration.md).
 
+**Profiles (chatllm presets):** the gateway can bundle LLM model/system prompt/TTS/MCP
+tools/memory into a named **profile** (`POST /v1/profiles`) and activate it with
+`?profile=<name>` on the WS URL — see
+[`../docs/device-integration.md`](../docs/device-integration.md#1a-profiles-connect-a-device-as-a-preset-chatllm-persona).
+This firmware does **not yet** expose an `AA_PROFILE` menuconfig option, so it always
+sends `stt_engine`/`tts_engine`/`language` from the Kconfig values above and never a
+`profile` param. To have an ESP32 device behave like a specific profile today, either
+make that profile's LLM/TTS settings the server's `.env` defaults, or use the
+`AA_STT_ENGINE`/`AA_TTS_ENGINE`/`AA_LANGUAGE` options to match it manually. The
+Raspberry Pi clients (`scripts/rpi_voice_client.py --profile <name>` and
+`agent-assistant/`'s `session.profile` in `config.yaml`) already support `?profile=`.
+
 ---
 
 ## Components
