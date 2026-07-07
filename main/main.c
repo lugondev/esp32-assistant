@@ -138,7 +138,11 @@ void app_main(void) {
     s_wcfg_port = cfg.server_port;
     ESP_ERROR_CHECK(ws_client_start(&wcfg, on_event, on_audio));
 
-    xTaskCreatePinnedToCore(spk_task, "spk", 4096, NULL, 6, NULL, 1);
-    xTaskCreatePinnedToCore(mic_task, "mic", 4096, NULL, 5, NULL, 1);
+    // 4096 was enough for the old esp_codec_dev-based audio path; the raw
+    // i2s_channel_read()/i2s_channel_write() driver calls (added when audio.c
+    // was rewritten for the INMP441/MAX98357A hardware) use more stack and
+    // overflowed mic_task's — bumped both tasks generously.
+    xTaskCreatePinnedToCore(spk_task, "spk", 8192, NULL, 6, NULL, 1);
+    xTaskCreatePinnedToCore(mic_task, "mic", 8192, NULL, 5, NULL, 1);
     ESP_LOGI(TAG, "running");
 }
