@@ -1,6 +1,7 @@
 #include "wifi_sta.h"
 #include "wifi_cfg.h"
 #include "provisioning.h"
+#include "display.h"
 #include "nvs_flash.h"
 #include "ws_client.h"
 #include "audio.h"
@@ -11,6 +12,7 @@
 #include "freertos/queue.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 // Bool Kconfig options are undefined (not 0) when unset — provide a fallback.
 #ifndef CONFIG_AA_SERVER_SECURE
@@ -27,9 +29,21 @@ static volatile app_state_t s_state = APP_CONNECTING;
 typedef struct { uint8_t data[OPUS_MAX_PACKET]; int len; } pkt_t;
 static QueueHandle_t s_pktq;   // holds pkt_t* ; depth ~ 150 ms / 60 ms ≈ a few frames + slack
 
+// Set once in app_main before ws_client_start(); read by on_event() to show
+// "host:port" on the session-ready screen without threading cfg through the callback.
+static char s_wcfg_host[64];
+static int  s_wcfg_port;
+
 static void on_event(const wsp_event_t *ev) {
     switch (ev->type) {
-    case WSP_EV_SESSION_STARTED: s_state = APP_LISTENING; ESP_LOGI(TAG, "session ready"); break;
+    case WSP_EV_SESSION_STARTED: {
+        s_state = APP_LISTENING;
+        ESP_LOGI(TAG, "session ready");
+        char host_port[64];
+        snprintf(host_port, sizeof host_port, "%s:%d", s_wcfg_host, s_wcfg_port);
+        display_show("Connected", host_port);
+        break;
+    }
     case WSP_EV_USER_TRANSCRIPT: ESP_LOGI(TAG, "you: %s", ev->text); break;
     case WSP_EV_RESPONSE_TEXT:   ESP_LOGI(TAG, "bot: %s", ev->text); break;
     case WSP_EV_AUDIO_START:     s_state = APP_SPEAKING; break;
@@ -38,7 +52,10 @@ static void on_event(const wsp_event_t *ev) {
         s_state = APP_LISTENING;
         { pkt_t *p; while (xQueueReceive(s_pktq, &p, 0) == pdTRUE) free(p); }  // flush
         break;
-    case WSP_EV_ERROR:           ESP_LOGE(TAG, "server error: %s", ev->text); break;
+    case WSP_EV_ERROR:
+        ESP_LOGE(TAG, "server error: %s", ev->text);
+        display_show("Error", ev->text);
+        break;
     default: break;
     }
 }
@@ -78,6 +95,7 @@ static void spk_task(void *arg) {
 
 void app_main(void) {
     ESP_LOGI(TAG, "esp32-assistant booting");
+    ESP_ERROR_CHECK(display_init());
 
     esp_err_t nvs_err = nvs_flash_init();
     if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -88,12 +106,15 @@ void app_main(void) {
     wifi_cfg_t cfg;
     ESP_ERROR_CHECK(wifi_cfg_load(&cfg));
 
+    display_show("Connecting WiFi...", NULL);
     ESP_ERROR_CHECK(wifi_sta_start(cfg.ssid, cfg.password));
     if (!wifi_sta_wait_connected(15000)) {
         ESP_LOGW(TAG, "wifi connect failed, starting provisioning portal");
+        display_show("WiFi failed", "Starting setup AP...");
         provisioning_start(&cfg);  // does not return
     }
 
+    display_show("WiFi OK", "Connecting gateway...");
     ESP_ERROR_CHECK(audio_init());
     ESP_ERROR_CHECK(opus_codec_init());
 
@@ -106,6 +127,8 @@ void app_main(void) {
         .language = CONFIG_AA_LANGUAGE, .sample_rate = 16000, .output_sample_rate = 16000,
         .profile = CONFIG_AA_PROFILE,
     };
+    strncpy(s_wcfg_host, cfg.server_host, sizeof(s_wcfg_host) - 1);
+    s_wcfg_port = cfg.server_port;
     ESP_ERROR_CHECK(ws_client_start(&wcfg, on_event, on_audio));
 
     xTaskCreatePinnedToCore(spk_task, "spk", 4096, NULL, 6, NULL, 1);
