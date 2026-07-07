@@ -78,7 +78,11 @@ esp_err_t display_init(void) {
         .cs_gpio_num = -1,
         .dc_gpio_num = DISP_DC_GPIO,
         .spi_mode = 0,
-        .pclk_hz = 20 * 1000 * 1000,
+        .pclk_hz = 4 * 1000 * 1000,  // 20MHz was likely too fast for jumper-wire
+                                      // prototyping wiring (unshielded long leads
+                                      // are prone to signal integrity issues at
+                                      // high SPI clock, a common cause of "SPI
+                                      // init succeeds but nothing shows").
         .trans_queue_depth = 10,
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
