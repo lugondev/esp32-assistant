@@ -2,6 +2,7 @@
 #include "provisioning_ssid.h"
 #include "provisioning_form.h"
 #include "display.h"
+#include "voice.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "esp_http_server.h"
@@ -171,6 +172,7 @@ void provisioning_start(const wifi_cfg_t *current) {
     char ssid_ip[64];
     snprintf(ssid_ip, sizeof ssid_ip, "%s 192.168.9.1", ssid);
     display_show("Setup WiFi", ssid_ip);
+    voice_play(VOICE_SETUP);
 
     xTaskCreate(dns_task, "prov_dns", 4096, NULL, 5, NULL);
 
