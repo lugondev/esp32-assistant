@@ -11,6 +11,7 @@
 #include "lwip/sockets.h"
 #include "lwip/ip4_addr.h"
 #include <string.h>
+#include <stdlib.h>
 
 static const char *TAG = "provisioning";
 
