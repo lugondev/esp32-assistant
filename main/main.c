@@ -31,7 +31,9 @@ static QueueHandle_t s_pktq;   // holds pkt_t* ; depth ~ 150 ms / 60 ms ≈ a fe
 
 // Set once in app_main before ws_client_start(); read by on_event() to show
 // "host:port" on the session-ready screen without threading cfg through the callback.
-static char s_wcfg_host[64];
+// Sized to match wifi_cfg_t.server_host (WIFI_CFG_HOST_MAX=127 + NUL), so a
+// long configured hostname isn't silently truncated on the status screen.
+static char s_wcfg_host[128];
 static int  s_wcfg_port;
 
 static void on_event(const wsp_event_t *ev) {
@@ -39,7 +41,7 @@ static void on_event(const wsp_event_t *ev) {
     case WSP_EV_SESSION_STARTED: {
         s_state = APP_LISTENING;
         ESP_LOGI(TAG, "session ready");
-        char host_port[64];
+        char host_port[128 + 1 + 6];  // host + ':' + up to 5-digit port + NUL
         snprintf(host_port, sizeof host_port, "%s:%d", s_wcfg_host, s_wcfg_port);
         display_show("Connected", host_port);
         break;
