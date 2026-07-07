@@ -8,3 +8,9 @@ CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=y
+
+# Default 512 bytes is too small for real phone browsers hitting the
+# provisioning captive portal (Accept/Accept-Language/client-hint headers
+# routinely exceed it, causing "Header fields are too long" / HTTP 431).
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
+CONFIG_HTTPD_MAX_URI_LEN=1024
