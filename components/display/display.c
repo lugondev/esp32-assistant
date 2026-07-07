@@ -77,12 +77,12 @@ esp_err_t display_init(void) {
     esp_lcd_panel_io_spi_config_t io_config = {
         .cs_gpio_num = -1,
         .dc_gpio_num = DISP_DC_GPIO,
-        .spi_mode = 0,
-        .pclk_hz = 4 * 1000 * 1000,  // 20MHz was likely too fast for jumper-wire
-                                      // prototyping wiring (unshielded long leads
-                                      // are prone to signal integrity issues at
-                                      // high SPI clock, a common cause of "SPI
-                                      // init succeeds but nothing shows").
+        .spi_mode = 3,  // confirmed against xiaozhi-esp32's genjutech-s3-1.54tft
+                        // board (same panel/wiring family) — mode 0 has wrong
+                        // clock polarity/phase, so the panel silently
+                        // misreads every SPI command during init even though
+                        // there's no read-back to detect it in software.
+        .pclk_hz = 4 * 1000 * 1000,
         .trans_queue_depth = 10,
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
@@ -100,6 +100,7 @@ esp_err_t display_init(void) {
     ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_set_gap(s_panel, 0, 0));
+    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(s_panel, true));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
 
     clear_screen();
