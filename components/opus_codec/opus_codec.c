@@ -12,6 +12,9 @@ esp_err_t opus_codec_init(void) {
     if (err != OPUS_OK || !s_enc) { ESP_LOGE(TAG, "enc create %d", err); return ESP_FAIL; }
     opus_encoder_ctl(s_enc, OPUS_SET_BITRATE(24000));
     opus_encoder_ctl(s_enc, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
+    // Lower complexity: much less CPU (and some stack) on ESP32 for a barely
+    // perceptible quality drop at voice bitrates — standard for embedded Opus.
+    opus_encoder_ctl(s_enc, OPUS_SET_COMPLEXITY(3));
     s_dec = opus_decoder_create(OPUS_DOWN_RATE, 1, &err);
     if (err != OPUS_OK || !s_dec) { ESP_LOGE(TAG, "dec create %d", err); return ESP_FAIL; }
     return ESP_OK;
@@ -23,6 +26,9 @@ int opus_codec_encode(const int16_t *pcm960, uint8_t *out, int out_cap) {
 }
 
 int opus_codec_decode(const uint8_t *pkt, int pkt_len, int16_t *pcm_out) {
-    int n = opus_decode(s_dec, pkt, pkt_len, pcm_out, OPUS_DOWN_SAMPLES, 0);
+    // Caller's pcm_out must be OPUS_DOWN_SAMPLES_MAX (120ms) — a single Opus
+    // packet may decode to up to that many samples, and opus_decode writes
+    // as many as the packet contains up to this cap.
+    int n = opus_decode(s_dec, pkt, pkt_len, pcm_out, OPUS_DOWN_SAMPLES_MAX, 0);
     return n < 0 ? -1 : n;
 }

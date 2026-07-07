@@ -14,6 +14,25 @@ static SemaphoreHandle_t s_mutex;
 // (not a VLA) to keep stack usage bounded and predictable.
 #define AUDIO_MIC_MAX_SAMPLES 960
 
+// Software output volume (0..100). MAX98357A has no hardware volume, so
+// audio_spk_write() scales samples by this before the I2S write.
+static volatile int s_volume = 80;
+#define AUDIO_SPK_SCRATCH 512  // static scratch for volume-scaled chunks
+
+void audio_set_volume(int pct) {
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    s_volume = pct;
+}
+int audio_get_volume(void) { return s_volume; }
+int audio_adjust_volume(int delta) {
+    int v = s_volume + delta;
+    if (v < 0) v = 0;
+    if (v > 100) v = 100;
+    s_volume = v;
+    return v;
+}
+
 esp_err_t audio_init(void) {
     // Mic: INMP441 outputs 24-bit samples left-justified in a 32-bit I2S
     // frame (it always clocks 32 SCK cycles per WS half-period, regardless
@@ -75,10 +94,33 @@ int audio_mic_read(int16_t *pcm, int samples) {
 }
 
 int audio_spk_write(const int16_t *pcm, int samples) {
-    size_t bytes_written = 0;
+    int vol = s_volume;
+    size_t total_written = 0;
+    esp_err_t err = ESP_OK;
+
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    esp_err_t err = i2s_channel_write(s_tx, pcm, samples * sizeof(int16_t), &bytes_written, portMAX_DELAY);
+    if (vol >= 100) {
+        // Passthrough — no scaling needed.
+        err = i2s_channel_write(s_tx, pcm, samples * sizeof(int16_t),
+                                &total_written, portMAX_DELAY);
+    } else {
+        // Scale in chunks through a static scratch buffer (input is const).
+        static int16_t scratch[AUDIO_SPK_SCRATCH];
+        int off = 0;
+        while (off < samples) {
+            int chunk = samples - off;
+            if (chunk > AUDIO_SPK_SCRATCH) chunk = AUDIO_SPK_SCRATCH;
+            for (int i = 0; i < chunk; i++)
+                scratch[i] = (int16_t)(((int32_t)pcm[off + i] * vol) / 100);
+            size_t bw = 0;
+            err = i2s_channel_write(s_tx, scratch, chunk * sizeof(int16_t),
+                                    &bw, portMAX_DELAY);
+            total_written += bw;
+            if (err != ESP_OK) break;
+            off += chunk;
+        }
+    }
     xSemaphoreGive(s_mutex);
     if (err != ESP_OK) return -1;
-    return (int)(bytes_written / sizeof(int16_t));
+    return (int)(total_written / sizeof(int16_t));
 }
