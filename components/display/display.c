@@ -23,11 +23,18 @@ static const char *TAG = "display";
 
 static esp_lcd_panel_handle_t s_panel;
 
+// Fewer, larger SPI transactions are more reliable than many tiny ones on
+// jumper-wire wiring (each transaction re-sends the row-address-set command;
+// a single corrupted one misdirects that chunk's data, showing up as a
+// stray colored band) — clear in 24-row bands (10 transactions) instead of
+// one row at a time (240 transactions).
+#define CLEAR_CHUNK_ROWS 24
+
 static void clear_screen(void) {
-    uint16_t black_row[DISP_WIDTH];
-    memset(black_row, 0, sizeof black_row);
-    for (int y = 0; y < DISP_HEIGHT; y++) {
-        esp_lcd_panel_draw_bitmap(s_panel, 0, y, DISP_WIDTH, y + 1, black_row);
+    static uint16_t black_chunk[DISP_WIDTH * CLEAR_CHUNK_ROWS];
+    memset(black_chunk, 0, sizeof black_chunk);
+    for (int y = 0; y < DISP_HEIGHT; y += CLEAR_CHUNK_ROWS) {
+        esp_lcd_panel_draw_bitmap(s_panel, 0, y, DISP_WIDTH, y + CLEAR_CHUNK_ROWS, black_chunk);
     }
 }
 
