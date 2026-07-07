@@ -25,12 +25,7 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data) {
     }
 }
 
-esp_err_t wifi_sta_start(void) {
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ESP_ERROR_CHECK(nvs_flash_init());
-    }
+esp_err_t wifi_sta_start(const char *ssid, const char *password) {
     s_events = xEventGroupCreate();
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
@@ -44,8 +39,8 @@ esp_err_t wifi_sta_start(void) {
         IP_EVENT, IP_EVENT_STA_GOT_IP, on_wifi, NULL, NULL));
 
     wifi_config_t wc = { 0 };
-    strncpy((char *)wc.sta.ssid, CONFIG_AA_WIFI_SSID, sizeof(wc.sta.ssid) - 1);
-    strncpy((char *)wc.sta.password, CONFIG_AA_WIFI_PASS, sizeof(wc.sta.password) - 1);
+    strncpy((char *)wc.sta.ssid, ssid, sizeof(wc.sta.ssid) - 1);
+    strncpy((char *)wc.sta.password, password, sizeof(wc.sta.password) - 1);
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
     ESP_ERROR_CHECK(esp_wifi_start());
