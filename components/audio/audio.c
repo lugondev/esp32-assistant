@@ -4,10 +4,13 @@
 #include "esp_codec_dev.h"
 #include "esp_codec_dev_defaults.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "audio";
 static i2s_chan_handle_t s_tx, s_rx;
 static esp_codec_dev_handle_t s_dev;
+static SemaphoreHandle_t s_mutex;
 
 static esp_err_t init_i2s(void) {
     i2s_chan_config_t cc = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
@@ -67,16 +70,26 @@ esp_err_t audio_init(void) {
     ESP_ERROR_CHECK(esp_codec_dev_open(s_dev, &fs));
     esp_codec_dev_set_out_vol(s_dev, 80);
     esp_codec_dev_set_in_gain(s_dev, 30.0);
+
+    s_mutex = xSemaphoreCreateMutex();
+    if (!s_mutex) { ESP_LOGE(TAG, "mutex create failed"); return ESP_FAIL; }
+
     ESP_LOGI(TAG, "audio ready");
     return ESP_OK;
 }
 
 int audio_mic_read(int16_t *pcm, int samples) {
     int bytes = samples * (int)sizeof(int16_t);
-    return esp_codec_dev_read(s_dev, pcm, bytes) == ESP_CODEC_DEV_OK ? samples : -1;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    int ret = esp_codec_dev_read(s_dev, pcm, bytes) == ESP_CODEC_DEV_OK ? samples : -1;
+    xSemaphoreGive(s_mutex);
+    return ret;
 }
 
 int audio_spk_write(const int16_t *pcm, int samples) {
     int bytes = samples * (int)sizeof(int16_t);
-    return esp_codec_dev_write(s_dev, (void *)pcm, bytes) == ESP_CODEC_DEV_OK ? samples : -1;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    int ret = esp_codec_dev_write(s_dev, (void *)pcm, bytes) == ESP_CODEC_DEV_OK ? samples : -1;
+    xSemaphoreGive(s_mutex);
+    return ret;
 }
