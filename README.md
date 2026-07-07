@@ -39,10 +39,11 @@ idf.py menuconfig
 
 Navigate to **"Assistant configuration"** and set:
 
+WiFi credentials are no longer set here — see **WiFi provisioning** below. The
+table below covers the gateway/hardware settings that remain compile-time.
+
 | Option | Key | Default | Notes |
 |--------|-----|---------|-------|
-| WiFi SSID | `AA_WIFI_SSID` | `myssid` | 2.4 GHz network |
-| WiFi password | `AA_WIFI_PASS` | `mypassword` | |
 | Gateway host | `AA_SERVER_HOST` | `192.168.1.50` | IP or domain |
 | Gateway port | `AA_SERVER_PORT` | `8000` | |
 | Use wss:// (TLS) | `AA_SERVER_SECURE` | off | Enable for production |
@@ -61,6 +62,34 @@ Navigate to **"Assistant configuration"** and set:
 
 The GPIO defaults match one common ESP32-S3 dev-kit wiring; **you must set the pin values for
 your specific board** before building.
+
+---
+
+## WiFi provisioning
+
+The device has no compile-time WiFi credentials. On every boot it tries to
+connect using whatever SSID/password is saved in NVS. If nothing is saved yet
+(first boot), or the saved credentials fail to connect within 15 seconds, the
+device switches into **provisioning mode**:
+
+1. It starts an open WiFi access point named `Lugo-XXXX` (`XXXX` = the last
+   4 hex digits of the device's MAC address — stable across reboots, so it's
+   always the same network name for a given device).
+2. Connect a phone or laptop to that network. Most OSes will pop up a
+   "Sign in to network" / captive-portal prompt automatically; if not,
+   browse to `http://192.168.9.1`.
+3. Fill in your WiFi SSID/password and the gateway host/port, then submit.
+4. The device saves the values to NVS and restarts, this time connecting to
+   your WiFi and the gateway.
+
+To reconfigure later (new WiFi network, moved gateway), the easiest path is
+to erase NVS and reboot so it goes straight back into provisioning mode:
+
+```bash
+source ~/esp/esp-idf/export.sh
+idf.py -p <port> erase-flash
+idf.py -p <port> flash
+```
 
 ---
 
@@ -136,6 +165,7 @@ precedence rules in the device-integration doc linked above). The Raspberry Pi c
 | Component | Description |
 |-----------|-------------|
 | `wifi` | WiFi STA init and reconnect; exposes `wifi_sta_start` / `wifi_sta_wait_connected` |
+| `provisioning` | SoftAP + captive DNS + HTTP config portal (`provisioning_start`); host-tested SSID/form logic in `provisioning_ssid.c`/`provisioning_form.c` |
 | `ws_protocol` | URL/JSON builder and parser for the gateway protocol; **dependency-free** (plain C, no ESP-IDF) |
 | `ws_client` | Thin wrapper around `esp_websocket_client`; dispatches binary audio frames and JSON events to callbacks |
 | `audio` | ES8311 codec init via `esp_codec_dev`, I2S channel configuration, `audio_mic_read` / `audio_spk_write` |
@@ -184,5 +214,4 @@ The following features are not implemented and are not planned for the initial r
 - OLED or display output
 - On-device wake-word detection
 - OTA firmware updates
-- Web-based WiFi provisioning
 - Push-to-talk mode
