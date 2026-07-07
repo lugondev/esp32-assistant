@@ -2,6 +2,9 @@
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_log.h"
+
+static const char *TAG = "buttons";
 
 #define BTN_WAKE_GPIO      47
 #define BTN_VOL_UP_GPIO    40
@@ -22,7 +25,13 @@ static void buttons_task(void *arg) {
             int lvl = gpio_get_level(s_gpios[i]);
             if (prev[i] == 1 && lvl == 0) {           // high->low = press edge
                 vTaskDelay(pdMS_TO_TICKS(20));          // debounce settle
-                if (gpio_get_level(s_gpios[i]) == 0 && s_cb) s_cb(s_ids[i]);
+                if (gpio_get_level(s_gpios[i]) == 0) {
+                    ESP_LOGI(TAG, "press gpio%d", s_gpios[i]);
+                    if (s_cb) s_cb(s_ids[i]);
+                    // wait for release so a hold doesn't retrigger
+                    while (gpio_get_level(s_gpios[i]) == 0) vTaskDelay(pdMS_TO_TICKS(20));
+                    lvl = 1;
+                }
             }
             prev[i] = lvl;
         }

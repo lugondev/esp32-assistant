@@ -66,8 +66,11 @@ static void status_task(void *arg) {
     status_msg_t m;
     for (;;) {
         if (xQueueReceive(s_status_q, &m, portMAX_DELAY) == pdTRUE) {
+            ESP_LOGW(TAG, "status_task: show '%s' voice=%d", m.line1, m.play_voice);  // DIAGNOSTIC
             display_show(m.line1, m.has_line2 ? m.line2 : NULL);
+            ESP_LOGW(TAG, "status_task: display done");  // DIAGNOSTIC
             if (m.play_voice) voice_play(m.voice);
+            ESP_LOGW(TAG, "status_task: voice done");  // DIAGNOSTIC
         }
     }
 }
@@ -87,7 +90,8 @@ static void on_button(button_id_t id) {
         strncpy(m.line1, s_active ? "Listening" : "Idle", sizeof(m.line1) - 1);
         strncpy(m.line2, s_active ? "Speak now" : "Press wake to talk",
                 sizeof(m.line2) - 1);
-        xQueueSend(s_status_q, &m, 0);
+        BaseType_t ok = xQueueSend(s_status_q, &m, 0);  // DIAGNOSTIC ok
+        ESP_LOGW(TAG, "on_button WAKE: active=%d queued=%d", s_active, (int)ok);
         break;
     }
     case BTN_VOL_UP:

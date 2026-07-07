@@ -7,7 +7,13 @@
 static const char *TAG = "audio";
 static i2s_chan_handle_t s_rx;  // INMP441 mic, I2S_NUM_0, RX only
 static i2s_chan_handle_t s_tx;  // MAX98357A speaker, I2S_NUM_1, TX only
-static SemaphoreHandle_t s_mutex;
+// Serializes ONLY the two speaker writers (spk_task + voice_play) so they don't
+// interleave on the TX channel or race on the static scratch buffer below.
+// The mic RX channel (I2S_NUM_0) is a separate, independently thread-safe I2S
+// channel with a single reader (mic_task), so it must NOT share this lock — if
+// mic_task held it across its blocking i2s_channel_read(), the lower-priority
+// status_task could never acquire it for voice_play() and would hang forever.
+static SemaphoreHandle_t s_tx_mutex;
 
 // Largest samples value any caller passes to audio_mic_read() (mic_task in
 // main.c reads OPUS_UP_SAMPLES == 960 at a time). Sized as a fixed buffer
@@ -71,8 +77,8 @@ esp_err_t audio_init(void) {
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(s_tx, &tx_std));
     ESP_ERROR_CHECK(i2s_channel_enable(s_tx));
 
-    s_mutex = xSemaphoreCreateMutex();
-    if (!s_mutex) { ESP_LOGE(TAG, "mutex create failed"); return ESP_FAIL; }
+    s_tx_mutex = xSemaphoreCreateMutex();
+    if (!s_tx_mutex) { ESP_LOGE(TAG, "mutex create failed"); return ESP_FAIL; }
 
     ESP_LOGI(TAG, "audio ready");
     return ESP_OK;
@@ -83,9 +89,8 @@ int audio_mic_read(int16_t *pcm, int samples) {
     static int32_t raw[AUDIO_MIC_MAX_SAMPLES];
     size_t bytes_read = 0;
 
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    // No lock: s_rx is a dedicated I2S channel read only by mic_task.
     esp_err_t err = i2s_channel_read(s_rx, raw, samples * sizeof(int32_t), &bytes_read, portMAX_DELAY);
-    xSemaphoreGive(s_mutex);
     if (err != ESP_OK) return -1;
 
     int got = (int)(bytes_read / sizeof(int32_t));
@@ -98,7 +103,7 @@ int audio_spk_write(const int16_t *pcm, int samples) {
     size_t total_written = 0;
     esp_err_t err = ESP_OK;
 
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    xSemaphoreTake(s_tx_mutex, portMAX_DELAY);
     if (vol >= 100) {
         // Passthrough — no scaling needed.
         err = i2s_channel_write(s_tx, pcm, samples * sizeof(int16_t),
@@ -120,7 +125,7 @@ int audio_spk_write(const int16_t *pcm, int samples) {
             off += chunk;
         }
     }
-    xSemaphoreGive(s_mutex);
+    xSemaphoreGive(s_tx_mutex);
     if (err != ESP_OK) return -1;
     return (int)(total_written / sizeof(int16_t));
 }
