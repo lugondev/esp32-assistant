@@ -1,4 +1,7 @@
 #include "wifi_sta.h"
+#include "wifi_cfg.h"
+#include "provisioning.h"
+#include "nvs_flash.h"
 #include "ws_client.h"
 #include "audio.h"
 #include "opus_codec.h"
@@ -75,21 +78,35 @@ static void spk_task(void *arg) {
 
 void app_main(void) {
     ESP_LOGI(TAG, "esp32-assistant booting");
-    ESP_ERROR_CHECK(wifi_sta_start());
-    if (!wifi_sta_wait_connected(20000)) { ESP_LOGE(TAG, "wifi timeout"); return; }
+
+    esp_err_t nvs_err = nvs_flash_init();
+    if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ESP_ERROR_CHECK(nvs_flash_init());
+    }
+
+    wifi_cfg_t cfg;
+    ESP_ERROR_CHECK(wifi_cfg_load(&cfg));
+
+    ESP_ERROR_CHECK(wifi_sta_start(cfg.ssid, cfg.password));
+    if (!wifi_sta_wait_connected(15000)) {
+        ESP_LOGW(TAG, "wifi connect failed, starting provisioning portal");
+        provisioning_start(&cfg);  // does not return
+    }
+
     ESP_ERROR_CHECK(audio_init());
     ESP_ERROR_CHECK(opus_codec_init());
 
     s_pktq = xQueueCreate(16, sizeof(pkt_t *));   // ~16*60ms buffer ceiling
 
-    wsp_config_t cfg = {
-        .host = CONFIG_AA_SERVER_HOST, .port = CONFIG_AA_SERVER_PORT,
+    wsp_config_t wcfg = {
+        .host = cfg.server_host, .port = cfg.server_port,
         .secure = CONFIG_AA_SERVER_SECURE,
         .stt_engine = CONFIG_AA_STT_ENGINE, .tts_engine = CONFIG_AA_TTS_ENGINE,
         .language = CONFIG_AA_LANGUAGE, .sample_rate = 16000, .output_sample_rate = 16000,
         .profile = CONFIG_AA_PROFILE,
     };
-    ESP_ERROR_CHECK(ws_client_start(&cfg, on_event, on_audio));
+    ESP_ERROR_CHECK(ws_client_start(&wcfg, on_event, on_audio));
 
     xTaskCreatePinnedToCore(spk_task, "spk", 4096, NULL, 6, NULL, 1);
     xTaskCreatePinnedToCore(mic_task, "mic", 4096, NULL, 5, NULL, 1);

@@ -1,13 +1,5 @@
 menu "Assistant configuration"
 
-config AA_WIFI_SSID
-    string "WiFi SSID"
-    default "myssid"
-
-config AA_WIFI_PASS
-    string "WiFi password"
-    default "mypassword"
-
 config AA_SERVER_HOST
     string "Gateway host (IP or domain)"
     default "192.168.1.50"
