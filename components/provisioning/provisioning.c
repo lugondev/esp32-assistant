@@ -1,6 +1,7 @@
 #include "provisioning.h"
 #include "provisioning_ssid.h"
 #include "provisioning_form.h"
+#include "display.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "esp_http_server.h"
@@ -10,6 +11,7 @@
 #include "freertos/task.h"
 #include "lwip/sockets.h"
 #include "lwip/ip4_addr.h"
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -165,6 +167,10 @@ void provisioning_start(const wifi_cfg_t *current) {
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
     ESP_ERROR_CHECK(esp_wifi_start());
     ESP_LOGI(TAG, "provisioning AP '%s' up at 192.168.9.1", ssid);
+
+    char ssid_ip[64];
+    snprintf(ssid_ip, sizeof ssid_ip, "%s 192.168.9.1", ssid);
+    display_show("Setup WiFi", ssid_ip);
 
     xTaskCreate(dns_task, "prov_dns", 4096, NULL, 5, NULL);
 
