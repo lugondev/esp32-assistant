@@ -2,6 +2,7 @@
 #include "wifi_cfg.h"
 #include "provisioning.h"
 #include "display.h"
+#include "voice.h"
 #include "nvs_flash.h"
 #include "ws_client.h"
 #include "audio.h"
@@ -44,6 +45,7 @@ static void on_event(const wsp_event_t *ev) {
         char host_port[128 + 1 + 6];  // host + ':' + up to 5-digit port + NUL
         snprintf(host_port, sizeof host_port, "%s:%d", s_wcfg_host, s_wcfg_port);
         display_show("Connected", host_port);
+        voice_play(VOICE_CONNECTED);
         break;
     }
     case WSP_EV_USER_TRANSCRIPT: ESP_LOGI(TAG, "you: %s", ev->text); break;
@@ -98,6 +100,9 @@ static void spk_task(void *arg) {
 void app_main(void) {
     ESP_LOGI(TAG, "esp32-assistant booting");
     ESP_ERROR_CHECK(display_init());
+    ESP_ERROR_CHECK(audio_init());  // moved earlier: voice_play() needs the codec
+                                     // ready before the first status announcement,
+                                     // and audio_init() has no WiFi dependency.
 
     esp_err_t nvs_err = nvs_flash_init();
     if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -109,6 +114,7 @@ void app_main(void) {
     ESP_ERROR_CHECK(wifi_cfg_load(&cfg));
 
     display_show("Connecting WiFi...", NULL);
+    voice_play(VOICE_CONNECTING);
     ESP_ERROR_CHECK(wifi_sta_start(cfg.ssid, cfg.password));
     if (!wifi_sta_wait_connected(15000)) {
         ESP_LOGW(TAG, "wifi connect failed, starting provisioning portal");
@@ -117,7 +123,6 @@ void app_main(void) {
     }
 
     display_show("WiFi OK", "Connecting gateway...");
-    ESP_ERROR_CHECK(audio_init());
     ESP_ERROR_CHECK(opus_codec_init());
 
     s_pktq = xQueueCreate(16, sizeof(pkt_t *));   // ~16*60ms buffer ceiling
