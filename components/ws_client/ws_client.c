@@ -46,6 +46,10 @@ esp_err_t ws_client_start(const wsp_config_t *cfg,
     esp_websocket_client_config_t wc = {
         .uri = uri, .reconnect_timeout_ms = 2000, .network_timeout_ms = 10000,
         .buffer_size = 2048,
+        // Default (4KB, WEBSOCKET_TASK_STACK) overflowed once on_event()
+        // started calling into display_show()/voice_play() (SPI/I2S driver
+        // calls), which run on this same task via the WS event callback.
+        .task_stack = 8192,
     };
     s_client = esp_websocket_client_init(&wc);
     if (!s_client) return ESP_ERR_NO_MEM;

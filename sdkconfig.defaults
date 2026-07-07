@@ -14,3 +14,9 @@ CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=y
 # routinely exceed it, causing "Header fields are too long" / HTTP 431).
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
 CONFIG_HTTPD_MAX_URI_LEN=1024
+
+# Default 2304 bytes overflows once WebSocket event handling (on_event() in
+# main.c, invoked via the default event loop) started calling into
+# display_show()/voice_play() (SPI/I2S driver calls) — crashed right after
+# "session ready" every time.
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=8192
