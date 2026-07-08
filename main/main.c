@@ -24,8 +24,22 @@
 static const char *TAG = "app";
 
 typedef enum { APP_CONNECTING, APP_LISTENING, APP_SPEAKING } app_state_t;
-// Single-writer: only the ws event callback writes s_state; mic_task/spk_task read it.
+// s_state gates the half-duplex mic (mic_task streams only in APP_LISTENING). Writers:
+// the ws event callback sets APP_SPEAKING / APP_CONNECTING / (APP_LISTENING on abort or
+// a text-only turn); spk_task sets APP_LISTENING once playback has fully DRAINED. This
+// hand-off matters: TURN_DONE means the server finished *sending*, but the jitter buffer
+// may still hold hundreds of ms of the bot's voice. Reopening the mic at TURN_DONE lets
+// it capture that trailing audio and transcribe it as user speech -> a self-talk loop.
+// So TURN_DONE only arms s_turn_ending; spk_task flips to LISTENING after the buffer
+// empties. The two writers touch disjoint transitions, so no lock is needed.
 static volatile app_state_t s_state = APP_CONNECTING;
+static volatile bool s_turn_ending = false;  // TURN_DONE seen; waiting for playback to drain
+// True while status_task plays a local voice clip (e.g. the "connected / sẵn sàng"
+// announcement) out the speaker. Those clips bypass the APP_SPEAKING state machine, so
+// without this the mic would capture them and transcribe the announcement as user speech
+// (observed: "sẵn sàng" prepended to what the user actually said). Single-writer:
+// status_task sets/clears it; mic_task reads it.
+static volatile bool s_voice_busy = false;
 
 // Conversation gate: false = idle (mic muted) after connect; the Wake button
 // toggles it. mic_task only streams when s_active. Written only by the button
@@ -35,6 +49,22 @@ static volatile bool s_active = false;
 // jitter buffer: queue of heap-allocated Opus packets
 typedef struct { uint8_t data[OPUS_MAX_PACKET]; int len; } pkt_t;
 static QueueHandle_t s_pktq;   // holds pkt_t* ; depth ~ 150 ms / 60 ms ≈ a few frames + slack
+
+// Prime the jitter buffer before starting playback so a reply doesn't underrun
+// between sentence chunks. The gateway bursts each chunk's Opus frames then pauses
+// to synthesize the next chunk; without slack the queue can hit empty mid-reply and
+// spk_task stalls -> an audible gap ("giật cục"). We hold playback until this many
+// frames (~4 * 60 ms = 240 ms slack) are buffered, then drain, and re-prime whenever
+// the queue empties. Lower it to shave first-audio latency; raise it if replies still
+// stutter. A short reply that never reaches this depth still plays once the turn ends
+// (s_turn_ending is armed), so it can never get stuck priming.
+#define SPK_PREBUFFER_FRAMES 4
+
+// After the reply's audio has drained, wait this long before reopening the mic so the
+// final I2S DMA buffer plays out and the room echo decays — otherwise the mic captures
+// the tail of our own speech and the STT transcribes it, looping the bot into talking
+// to itself. Raise it if self-talk still happens; lower it to reply-to-speech faster.
+#define SPK_TAIL_GUARD_MS 250
 
 // Set once in app_main before ws_client_start(); read by on_event() to show
 // "host:port" on the session-ready screen without threading cfg through the callback.
@@ -67,7 +97,14 @@ static void status_task(void *arg) {
     for (;;) {
         if (xQueueReceive(s_status_q, &m, portMAX_DELAY) == pdTRUE) {
             display_show(m.line1, m.has_line2 ? m.line2 : NULL);
-            if (m.play_voice) voice_play(m.voice);
+            if (m.play_voice) {
+                // Mute the mic for the clip's duration + tail so the announcement
+                // doesn't echo into STT (voice_play blocks until the clip is written).
+                s_voice_busy = true;
+                voice_play(m.voice);
+                vTaskDelay(pdMS_TO_TICKS(SPK_TAIL_GUARD_MS));
+                s_voice_busy = false;
+            }
         }
     }
 }
@@ -115,9 +152,16 @@ static void on_event(const wsp_event_t *ev) {
     }
     case WSP_EV_USER_TRANSCRIPT: ESP_LOGI(TAG, "you: %s", ev->text); break;
     case WSP_EV_RESPONSE_TEXT:   ESP_LOGI(TAG, "bot: %s", ev->text); break;
-    case WSP_EV_AUDIO_START:     s_state = APP_SPEAKING; break;
-    case WSP_EV_TURN_DONE:       s_state = APP_LISTENING; break;
+    case WSP_EV_AUDIO_START:     s_turn_ending = false; s_state = APP_SPEAKING; break;
+    case WSP_EV_TURN_DONE:
+        // Don't open the mic yet — the jitter buffer may still be playing the bot's
+        // voice. Arm the drain hand-off; spk_task returns us to LISTENING once empty.
+        // A text-only turn (no audio was playing) has nothing to drain, so switch now.
+        if (s_state == APP_SPEAKING) s_turn_ending = true;
+        else s_state = APP_LISTENING;
+        break;
     case WSP_EV_ABORTED:
+        s_turn_ending = false;
         s_state = APP_LISTENING;
         { pkt_t *p; while (xQueueReceive(s_pktq, &p, 0) == pdTRUE) free(p); }  // flush
         break;
@@ -155,7 +199,7 @@ static void mic_task(void *arg) {
         if (got != OPUS_UP_SAMPLES) { vTaskDelay(pdMS_TO_TICKS(10)); continue; }
         // Only stream when the user has activated the conversation (Wake button),
         // the session is ready, and we're not playing the bot (half-duplex).
-        if (!s_active || s_state != APP_LISTENING || !ws_client_connected()) continue;
+        if (!s_active || s_state != APP_LISTENING || s_voice_busy || !ws_client_connected()) continue;
         uplink_pkt_t *p = malloc(sizeof(uplink_pkt_t));
         if (!p) continue;
         int n = opus_codec_encode(pcm, p->data, sizeof p->data);
@@ -184,8 +228,33 @@ static void spk_task(void *arg) {
                                          // the gateway may send, not just 60ms —
                                          // undersizing this stack-smashed spk_task.
     pkt_t *p;
+    bool priming = true;   // build slack before the first frame of each burst
     for (;;) {
-        if (xQueueReceive(s_pktq, &p, pdMS_TO_TICKS(100)) != pdTRUE) continue;
+        if (priming) {
+            // Wait for buffer slack before draining. Exceptions that start playback
+            // early: enough frames buffered (q >= prime depth), or the turn is ending
+            // (s_turn_ending) so the buffered tail must flush even if short. q==0 just
+            // keeps us idle here. Keyed on s_turn_ending, not s_state, because the turn
+            // now stays APP_SPEAKING until this task drains it.
+            UBaseType_t q = uxQueueMessagesWaiting(s_pktq);
+            if (q == 0 || (q < SPK_PREBUFFER_FRAMES && !s_turn_ending)) {
+                vTaskDelay(pdMS_TO_TICKS(10));
+                continue;
+            }
+            priming = false;
+        }
+        if (xQueueReceive(s_pktq, &p, pdMS_TO_TICKS(100)) != pdTRUE) {
+            priming = true;   // queue drained — re-prime before the next burst
+            if (s_turn_ending) {
+                // Playback of the reply has fully drained. Let the last I2S DMA buffer
+                // finish and the room echo decay before reopening the mic, so we don't
+                // transcribe our own trailing audio (the self-talk loop). THEN listen.
+                vTaskDelay(pdMS_TO_TICKS(SPK_TAIL_GUARD_MS));
+                s_turn_ending = false;
+                s_state = APP_LISTENING;
+            }
+            continue;
+        }
         int n = opus_codec_decode(p->data, p->len, pcm);
         free(p);
         if (n > 0) audio_spk_write(pcm, n);
