@@ -25,14 +25,19 @@
 static const char *TAG = "app";
 
 typedef enum { APP_CONNECTING, APP_LISTENING, APP_SPEAKING } app_state_t;
-// s_state gates the half-duplex mic (mic_task streams only in APP_LISTENING). Writers:
-// the ws event callback sets APP_SPEAKING / APP_CONNECTING / (APP_LISTENING on abort or
-// a text-only turn); spk_task sets APP_LISTENING once playback has fully DRAINED. This
-// hand-off matters: TURN_DONE means the server finished *sending*, but the jitter buffer
-// may still hold hundreds of ms of the bot's voice. Reopening the mic at TURN_DONE lets
-// it capture that trailing audio and transcribe it as user speech -> a self-talk loop.
-// So TURN_DONE only arms s_turn_ending; spk_task flips to LISTENING after the buffer
-// empties. The two writers touch disjoint transitions, so no lock is needed.
+// s_state gates the half-duplex mic (mic_task streams only in APP_LISTENING) and
+// whether downlink audio is accepted (on_audio drops unless APP_SPEAKING).
+// Writers: the ws event callback (WELCOME/TTS_START/TTS_STOP/GOODBYE), the button
+// task (barge-in -> APP_LISTENING), and spk_task (-> APP_LISTENING after the jitter
+// buffer drains). All concurrent writers either set APP_LISTENING or the ws
+// callback drives the SPEAKING/LISTENING turn edges; the writes are single-word
+// and idempotent per transition, so no lock is needed, but keep new writers to
+// this same discipline.
+// This hand-off matters: TURN_DONE means the server finished *sending*, but the
+// jitter buffer may still hold hundreds of ms of the bot's voice. Reopening the
+// mic at TURN_DONE lets it capture that trailing audio and transcribe it as user
+// speech -> a self-talk loop. So TURN_DONE only arms s_turn_ending; spk_task
+// flips to LISTENING after the buffer empties.
 static volatile app_state_t s_state = APP_CONNECTING;
 static volatile bool s_turn_ending = false;  // TURN_DONE seen; waiting for playback to drain
 // True while status_task plays a local voice clip (e.g. the "connected / sẵn sàng"
@@ -49,8 +54,15 @@ static volatile bool s_active = false;
 
 // Idle: server `goodbye` is primary; this device-side watchdog is a backup for a
 // silently dropped WS (no goodbye arrives). idle_timeout_s comes from `welcome`.
-static volatile int     s_idle_timeout_s = 0;   // 0 = no device-side timeout
-static volatile int64_t s_last_activity_us = 0;
+static volatile int      s_idle_timeout_s = 0;   // 0 = no device-side timeout
+// Seconds (not a 64-bit microsecond counter): a 64-bit value written by the ws
+// task and read by idle_watchdog_task isn't atomic on the 32-bit Xtensa core,
+// so a torn read could suppress or spuriously trip the watchdog. uint32_t
+// load/store is atomic here.
+static volatile uint32_t s_last_activity_s = 0;
+
+// chime only on the first welcome
+static volatile bool s_welcomed_once = false;
 
 // jitter buffer: queue of heap-allocated Opus packets
 typedef struct { uint8_t data[OPUS_MAX_PACKET]; int len; } pkt_t;
@@ -115,18 +127,18 @@ static void on_button(button_id_t id) {
     switch (id) {
     case BTN_WAKE: {
         if (s_state == APP_SPEAKING) {
-            // Barge-in: stop the bot NOW, locally, before the network round-trip.
-            // Flush queued packets, drop the committed I2S DMA, reset the decoder
-            // so the next turn starts clean (no click/warble). Then tell the server
-            // to cancel the turn. Connection stays open; go straight to LISTENING so
-            // the user can speak — do NOT toggle to Idle.
+            // Barge-in: stop the bot locally within one I2S frame, before the network
+            // round-trip. Flush queued packets, drop the committed I2S DMA, reset the
+            // decoder so the next turn starts clean (no click/warble). Then tell the
+            // server to cancel the turn. Connection stays open; go straight to
+            // LISTENING so the user can speak — do NOT toggle to Idle.
             { pkt_t *p; while (xQueueReceive(s_pktq, &p, 0) == pdTRUE) free(p); }
             audio_spk_reset();
             opus_codec_reset();
             s_turn_ending = false;
             s_state = APP_LISTENING;
             s_active = true;
-            s_last_activity_us = esp_timer_get_time();
+            s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
             ws_client_send_abort("user");
             status_msg_t m = { .play_voice = false, .has_line2 = true };
             strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
@@ -136,7 +148,7 @@ static void on_button(button_id_t id) {
         }
         // Not speaking: toggle idle/listening.
         s_active = !s_active;
-        s_last_activity_us = esp_timer_get_time();
+        s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
         status_msg_t m = { .play_voice = false, .has_line2 = true };
         strncpy(m.line1, s_active ? "Listening" : "Idle", sizeof(m.line1) - 1);
         strncpy(m.line2, s_active ? "Speak now" : "Press wake to talk",
@@ -156,14 +168,17 @@ static void on_button(button_id_t id) {
 }
 
 static void on_event(const lugo_event_t *ev) {
-    s_last_activity_us = esp_timer_get_time();  // any server event = activity
+    s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);  // any server event = activity
     switch (ev->type) {
     case LUGO_EV_WELCOME: {
         s_state = APP_LISTENING;
         if (ev->idle_timeout_s > 0) s_idle_timeout_s = ev->idle_timeout_s;
         ESP_LOGI(TAG, "session ready (idle_timeout_s=%d)", ev->idle_timeout_s);
-        // Connected but idle until the user presses Wake (s_active stays false).
-        status_msg_t m = { .play_voice = true, .voice = VOICE_CONNECTED, .has_line2 = true };
+        // Chime only the first time; reconnect-welcomes (e.g. after an idle
+        // goodbye) update the screen silently so an unattended device doesn't
+        // chime on a loop. (Full sleep-until-wake is Phase 2 / MQTT.)
+        status_msg_t m = { .play_voice = !s_welcomed_once, .voice = VOICE_CONNECTED, .has_line2 = true };
+        s_welcomed_once = true;
         strncpy(m.line1, "Connected", sizeof(m.line1) - 1);
         strncpy(m.line2, "Press wake to talk", sizeof(m.line2) - 1);
         xQueueSend(s_status_q, &m, 0);
@@ -187,6 +202,8 @@ static void on_event(const lugo_event_t *ev) {
         s_turn_ending = false;
         s_state = APP_LISTENING;
         { pkt_t *p; while (xQueueReceive(s_pktq, &p, 0) == pdTRUE) free(p); }  // flush
+        audio_spk_reset();
+        opus_codec_reset();
         status_msg_t m = { .play_voice = false, .has_line2 = true };
         strncpy(m.line1, "Idle", sizeof(m.line1) - 1);
         strncpy(m.line2, "Press wake to talk", sizeof(m.line2) - 1);
@@ -206,8 +223,13 @@ static void on_event(const lugo_event_t *ev) {
 }
 
 static void on_audio(const uint8_t *data, int len) {
-    s_last_activity_us = esp_timer_get_time();
+    s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
     if (len <= 0 || len > OPUS_MAX_PACKET) return;
+    // Drop frames that arrive when we're not in a speaking turn: after a local
+    // barge-in (state forced to LISTENING) this discards audio the server already
+    // put on the wire before it received our abort, so the bot doesn't briefly
+    // resume playing after the "stop."
+    if (s_state != APP_SPEAKING) return;
     pkt_t *p = malloc(sizeof(pkt_t));
     if (!p) return;
     memcpy(p->data, data, len); p->len = len;
@@ -299,8 +321,8 @@ static void idle_watchdog_task(void *arg) {
         vTaskDelay(pdMS_TO_TICKS(1000));
         int to = s_idle_timeout_s;
         if (!s_active || to <= 0) continue;
-        int64_t idle_us = esp_timer_get_time() - s_last_activity_us;
-        if (idle_us >= (int64_t)(to + 5) * 1000000LL) {
+        uint32_t idle_s = (uint32_t)(esp_timer_get_time() / 1000000) - s_last_activity_s;
+        if (idle_s >= (uint32_t)(to + 5)) {
             s_active = false;
             status_msg_t m = { .play_voice = false, .has_line2 = true };
             strncpy(m.line1, "Idle", sizeof(m.line1) - 1);
@@ -348,7 +370,7 @@ void app_main(void) {
     // STT/TTS/language all come from the chatllm profile server-side; the device
     // configures only which profile to connect to (CONFIG_AA_PROFILE). Downlink
     // is decoded at 16 kHz to match the device opus decoder.
-    s_last_activity_us = esp_timer_get_time();
+    s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
     ESP_ERROR_CHECK(ws_client_start(
         cfg.server_host, cfg.server_port, CONFIG_AA_SERVER_SECURE,
         CONFIG_AA_PROFILE, 16000, 16000, 60, on_event, on_audio));
