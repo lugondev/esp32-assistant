@@ -1,5 +1,5 @@
 # Host test build artifacts (compiled binaries; sources like test_*.c are tracked)
-test/test_ws_protocol
+test/test_lugo_protocol
 test/test_provisioning_ssid
 test/test_provisioning_form
 test/test_display_font

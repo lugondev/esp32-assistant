@@ -166,8 +166,8 @@ precedence rules in the device-integration doc linked above). The Raspberry Pi c
 |-----------|-------------|
 | `wifi` | WiFi STA init and reconnect; exposes `wifi_sta_start` / `wifi_sta_wait_connected` |
 | `provisioning` | SoftAP + captive DNS + HTTP config portal (`provisioning_start`); host-tested SSID/form logic in `provisioning_ssid.c`/`provisioning_form.c` |
-| `ws_protocol` | URL/JSON builder and parser for the gateway protocol; **dependency-free** (plain C, no ESP-IDF) |
-| `ws_client` | Thin wrapper around `esp_websocket_client`; dispatches binary audio frames and JSON events to callbacks |
+| `lugo_protocol` | Lugo wire codec: v3 binary frame encode/decode + JSON builders/parser (`wakeup`/`abort`/`text`; `welcome`/`stt`/`tts`/`goodbye`/`error`); **dependency-free** (plain C, no ESP-IDF) |
+| `ws_client` | Thin wrapper around `esp_websocket_client`; connects to `/v1/lugo/stream`, sends the `wakeup` handshake, v3-decodes downlink audio, dispatches audio + Lugo JSON events to callbacks |
 | `audio` | ES8311 codec init via `esp_codec_dev`, I2S channel configuration, `audio_mic_read` / `audio_spk_write` |
 | `opus_codec` | Opus encoder (16 kHz, 60 ms, 1 ch) and decoder (16 kHz, 60 ms, 1 ch); wraps `78/esp-opus` |
 | `main` | Application state machine (CONNECTING → LISTENING ↔ SPEAKING), jitter buffer (FreeRTOS queue of heap Opus packets), `mic_task` and `spk_task` |
@@ -176,8 +176,8 @@ precedence rules in the device-integration doc linked above). The Raspberry Pi c
 
 ## Host unit tests (no ESP-IDF required)
 
-The `ws_protocol` component is dependency-free and compiles on any POSIX host with a C11
-compiler. To run its tests:
+The `lugo_protocol` component is dependency-free and compiles on any POSIX host with a C11
+compiler. To run its tests (and the other host-testable components):
 
 ```bash
 cd test
@@ -201,8 +201,8 @@ run at 16 kHz. The I2S bus is initialised once at 16 kHz and the ES8311 codec us
 for both directions. The previous dual-rate limitation (16 kHz record / 24 kHz playback on one
 bus) no longer applies.
 
-**`ws_protocol` JSON parser:** the parser is a minimal key-scanner tuned to the gateway's flat
-event objects, not a general-purpose JSON parser. It assumes a trusted gateway — malformed or
+**`lugo_protocol` JSON parser:** the parser is a minimal key-scanner tuned to the gateway's flat
+Lugo event objects, not a general-purpose JSON parser. It assumes a trusted gateway — malformed or
 deeply nested JSON is not a supported input.
 
 ---
