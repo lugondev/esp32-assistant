@@ -17,3 +17,25 @@ int lugo_frame_encode(uint8_t type, const uint8_t *payload, int len,
 // the header or the declared size doesn't match the actual payload length.
 int lugo_frame_decode(const uint8_t *data, int len, uint8_t *out_type,
                       const uint8_t **payload, int *payload_len);
+
+typedef enum {
+    LUGO_EV_WELCOME, LUGO_EV_STT, LUGO_EV_TTS_START, LUGO_EV_TTS_SENTENCE,
+    LUGO_EV_TTS_STOP, LUGO_EV_MCP, LUGO_EV_GOODBYE, LUGO_EV_ERROR, LUGO_EV_UNKNOWN
+} lugo_ev_type_t;
+
+typedef struct {
+    lugo_ev_type_t type;
+    char text[256];       // stt/sentence text, error message, or goodbye reason
+    int  sample_rate;     // welcome: audio_params.sample_rate
+    int  idle_timeout_s;  // welcome
+} lugo_event_t;
+
+// Parse a Lugo text frame. Returns 0 on success (type=UNKNOWN for unrecognized),
+// -1 if the payload isn't a JSON object.
+int lugo_parse_event(const char *json, lugo_event_t *out);
+
+// Builders. Return bytes written (excluding NUL), or -1 on overflow.
+int lugo_build_wakeup(char *buf, int buflen, const char *profile,
+                      int in_sr, int out_sr, int frame_ms);
+int lugo_build_abort(char *buf, int buflen, const char *reason);
+int lugo_build_text(char *buf, int buflen, const char *text);
