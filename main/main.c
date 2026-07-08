@@ -52,6 +52,12 @@ static volatile bool s_voice_busy = false;
 // callback, read by mic_task.
 static volatile bool s_active = false;
 
+// Barge-in request: set by the button task (which must not touch audio hardware
+// from its small stack — cross-task I2S/SPI calls have crashed here before), and
+// serviced by spk_task (the owner of the I2S TX + opus decoder), which flushes
+// the jitter queue, drops the DMA, and resets the decoder. One-shot flag.
+static volatile bool s_barge_in = false;
+
 // Idle: server `goodbye` is primary; this device-side watchdog is a backup for a
 // silently dropped WS (no goodbye arrives). idle_timeout_s comes from `welcome`.
 static volatile int      s_idle_timeout_s = 0;   // 0 = no device-side timeout
@@ -127,17 +133,15 @@ static void on_button(button_id_t id) {
     switch (id) {
     case BTN_WAKE: {
         if (s_state == APP_SPEAKING) {
-            // Barge-in: stop the bot locally within one I2S frame, before the network
-            // round-trip. Flush queued packets, drop the committed I2S DMA, reset the
-            // decoder so the next turn starts clean (no click/warble). Then tell the
-            // server to cancel the turn. Connection stays open; go straight to
-            // LISTENING so the user can speak — do NOT toggle to Idle.
-            { pkt_t *p; while (xQueueReceive(s_pktq, &p, 0) == pdTRUE) free(p); }
-            audio_spk_reset();
-            opus_codec_reset();
+            // Barge-in. Switch to LISTENING NOW so on_audio drops any further
+            // downlink frames and the mic reopens; ask spk_task to do the actual
+            // audio flush/reset (I2S + opus) — the button task must not touch audio
+            // hardware from its small stack. Then tell the server to cancel the turn.
+            // Connection stays open; do NOT toggle to Idle.
             s_turn_ending = false;
             s_state = APP_LISTENING;
             s_active = true;
+            s_barge_in = true;   // spk_task flushes the queue + resets I2S/opus
             s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
             ws_client_send_abort("user");
             status_msg_t m = { .play_voice = false, .has_line2 = true };
@@ -186,14 +190,30 @@ static void on_event(const lugo_event_t *ev) {
     }
     case LUGO_EV_STT:          ESP_LOGI(TAG, "you: %s", ev->text); break;
     case LUGO_EV_TTS_SENTENCE: ESP_LOGI(TAG, "bot: %s", ev->text); break;
-    case LUGO_EV_TTS_START:    s_turn_ending = false; s_state = APP_SPEAKING; break;
+    case LUGO_EV_TTS_START: {
+        s_turn_ending = false;
+        s_state = APP_SPEAKING;
+        status_msg_t m = { .play_voice = false, .has_line2 = false };
+        strncpy(m.line1, "Speaking", sizeof(m.line1) - 1);
+        xQueueSend(s_status_q, &m, 0);
+        break;
+    }
     case LUGO_EV_TTS_STOP:
         // Turn ended (natural end OR server-side abort — both map to tts stop).
         // Don't open the mic yet: the jitter buffer may still be playing. Arm the
         // drain hand-off; spk_task returns us to LISTENING once empty. If nothing
         // is playing (text-only turn / already stopped by local barge-in), switch now.
-        if (s_state == APP_SPEAKING) s_turn_ending = true;
-        else s_state = APP_LISTENING;
+        if (s_state == APP_SPEAKING) {
+            s_turn_ending = true;  // spk_task drains, then flips to LISTENING + shows it
+        } else {
+            s_state = APP_LISTENING;
+            if (s_active) {
+                status_msg_t m = { .play_voice = false, .has_line2 = true };
+                strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
+                strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
+                xQueueSend(s_status_q, &m, 0);
+            }
+        }
         break;
     case LUGO_EV_GOODBYE: {
         // Server idle disconnect. Go idle (mic muted); user presses Wake to talk
@@ -281,6 +301,17 @@ static void spk_task(void *arg) {
     pkt_t *p;
     bool priming = true;   // build slack before the first frame of each burst
     for (;;) {
+        if (s_barge_in) {
+            // Serviced here (not in the button task) because this task owns the
+            // I2S TX channel + opus decoder. Flush the jitter queue, drop the
+            // committed DMA, and reset the decoder so the next reply is clean.
+            // The button task already set LISTENING + showed "Listening".
+            s_barge_in = false;
+            { pkt_t *bp; while (xQueueReceive(s_pktq, &bp, 0) == pdTRUE) free(bp); }
+            audio_spk_reset();
+            opus_codec_reset();
+            priming = true;
+        }
         if (priming) {
             // Wait for buffer slack before draining. Exceptions that start playback
             // early: enough frames buffered (q >= prime depth), or the turn is ending
@@ -303,6 +334,12 @@ static void spk_task(void *arg) {
                 vTaskDelay(pdMS_TO_TICKS(SPK_TAIL_GUARD_MS));
                 s_turn_ending = false;
                 s_state = APP_LISTENING;
+                if (s_active) {
+                    status_msg_t m = { .play_voice = false, .has_line2 = true };
+                    strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
+                    strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
+                    xQueueSend(s_status_q, &m, 0);
+                }
             }
             continue;
         }
