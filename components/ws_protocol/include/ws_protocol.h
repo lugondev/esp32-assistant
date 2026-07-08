@@ -29,12 +29,13 @@ typedef struct {
     const char *host;
     int port;
     bool secure;
-    const char *stt_engine;
-    const char *tts_engine;
-    const char *language;
     int sample_rate;
     int output_sample_rate;
-    const char *profile;  // optional named chatllm profile (POST /v1/profiles); NULL/"" = omit
+    // Named chatllm profile (POST /v1/profiles). The profile owns the STT engine +
+    // language, TTS voice, LLM model, tools and memory server-side, so the device
+    // configures only which profile to use — not the engines. NULL/"" = omit
+    // (server falls back to its own .env defaults).
+    const char *profile;
 } wsp_config_t;
 
 // Parse one server JSON text frame. Returns 0 on success (including unknown
@@ -48,8 +49,8 @@ int wsp_build_control(char *buf, size_t buflen, const char *type);
 // Returns length or -1 if too small.
 int wsp_build_text(char *buf, size_t buflen, const char *text);
 
-// Build connect URI: ws://host:port/v1/conversation/stream?stt_engine=…&tts_engine=…&language=…
-// &sample_rate=…&audio_codec=opus&output=audio,text&audio_out=opus&output_sample_rate=…
-// (wss:// when cfg->secure). Appends &profile=<cfg->profile> when non-NULL/non-empty.
-// Returns length or -1 if truncated.
+// Build connect URI: ws://host:port/v1/conversation/stream?sample_rate=…
+// &audio_codec=opus&output=audio,text&audio_out=opus&output_sample_rate=…
+// (wss:// when cfg->secure). Appends &profile=<cfg->profile> when non-NULL/non-empty;
+// STT/TTS/language come from that profile server-side. Returns length or -1 if truncated.
 int wsp_build_uri(char *buf, size_t buflen, const wsp_config_t *cfg);

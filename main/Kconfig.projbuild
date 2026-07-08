@@ -12,26 +12,15 @@ config AA_SERVER_SECURE
     bool "Use wss:// (TLS)"
     default n
 
-config AA_STT_ENGINE
-    string "STT engine"
-    default "whisper_mlx"
-
-config AA_TTS_ENGINE
-    string "TTS engine"
-    default "vieneu"
-
-config AA_LANGUAGE
-    string "Language hint"
-    default "vi"
-
 config AA_PROFILE
-    string "Chatllm profile name (optional)"
+    string "Chatllm profile name"
     default ""
     help
-        Named profile created on the gateway via POST /v1/profiles, bundling LLM
-        model/system prompt/TTS/MCP tools/memory. When set, sent as &profile=<name>
-        on the WS URL and overrides the server's .env LLM defaults for this device.
-        Leave empty to omit (device uses AA_STT_ENGINE/AA_TTS_ENGINE/AA_LANGUAGE only).
+        Named profile created on the gateway via POST /v1/profiles (or the control
+        panel), bundling the STT engine + language, TTS voice, LLM model/system
+        prompt, MCP tools and memory. Sent as &profile=<name> on the WS URL — the
+        device configures only which profile to use, not the engines. Leave empty
+        to fall back to the server's own .env defaults.
 
 config AA_MIC_WS
     int "INMP441 mic I2S WS/LRCK gpio"

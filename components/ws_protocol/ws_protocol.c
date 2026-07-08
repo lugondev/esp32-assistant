@@ -151,11 +151,9 @@ int wsp_build_text(char *buf, size_t buflen, const char *text) {
 int wsp_build_uri(char *buf, size_t buflen, const wsp_config_t *cfg) {
     int n = snprintf(buf, buflen,
         "%s://%s:%d/v1/conversation/stream"
-        "?stt_engine=%s&tts_engine=%s&language=%s"
-        "&sample_rate=%d&audio_codec=opus&output=audio,text"
+        "?sample_rate=%d&audio_codec=opus&output=audio,text"
         "&audio_out=opus&output_sample_rate=%d",
         cfg->secure ? "wss" : "ws", cfg->host, cfg->port,
-        cfg->stt_engine, cfg->tts_engine, cfg->language,
         cfg->sample_rate, cfg->output_sample_rate);
     if (n < 0 || (size_t)n >= buflen) return -1;
 

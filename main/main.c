@@ -226,11 +226,12 @@ void app_main(void) {
     xTaskCreatePinnedToCore(status_task, "status", 8192, NULL, 4, NULL, 1);
     buttons_start(on_button);  // Wake toggles s_active; Vol +/- adjust volume
 
+    // STT/TTS/language all come from the chatllm profile server-side; the device
+    // configures only which profile to connect to (CONFIG_AA_PROFILE).
     wsp_config_t wcfg = {
         .host = cfg.server_host, .port = cfg.server_port,
         .secure = CONFIG_AA_SERVER_SECURE,
-        .stt_engine = CONFIG_AA_STT_ENGINE, .tts_engine = CONFIG_AA_TTS_ENGINE,
-        .language = CONFIG_AA_LANGUAGE, .sample_rate = 16000, .output_sample_rate = 16000,
+        .sample_rate = 16000, .output_sample_rate = 16000,
         .profile = CONFIG_AA_PROFILE,
     };
     strncpy(s_wcfg_host, cfg.server_host, sizeof(s_wcfg_host) - 1);
