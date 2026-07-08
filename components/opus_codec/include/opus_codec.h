@@ -19,3 +19,6 @@
 esp_err_t opus_codec_init(void);
 int opus_codec_encode(const int16_t *pcm960, uint8_t *out, int out_cap);
 int opus_codec_decode(const uint8_t *pkt, int pkt_len, int16_t *pcm_out);
+// Reset the decoder's internal state (call on barge-in/turn abort so a new
+// reply doesn't decode against stale inter-frame state, which clicks/warbles).
+void opus_codec_reset(void);

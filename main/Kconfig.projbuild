@@ -18,9 +18,10 @@ config AA_PROFILE
     help
         Named profile created on the gateway via POST /v1/profiles (or the control
         panel), bundling the STT engine + language, TTS voice, LLM model/system
-        prompt, MCP tools and memory. Sent as &profile=<name> on the WS URL — the
-        device configures only which profile to use, not the engines. Leave empty
-        to fall back to the server's own .env defaults.
+        prompt, MCP tools and memory. Sent in the Lugo `wakeup` handshake on
+        connect (WS /v1/lugo/stream) — the device configures only which profile to
+        use, not the engines. Leave empty to fall back to the server's own .env
+        defaults (30s idle timeout, default engines).
 
 config AA_MIC_WS
     int "INMP441 mic I2S WS/LRCK gpio"
