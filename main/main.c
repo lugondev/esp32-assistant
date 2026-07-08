@@ -150,8 +150,10 @@ static void on_button(button_id_t id) {
             xQueueSend(s_status_q, &m, 0);
             break;
         }
-        // Not speaking: toggle idle/listening.
+        // Not speaking: toggle idle/listening. Waking re-enables the link (it may
+        // be asleep after an idle goodbye); going idle puts it back to sleep.
         s_active = !s_active;
+        ws_client_set_reconnect(s_active);
         s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
         status_msg_t m = { .play_voice = false, .has_line2 = true };
         strncpy(m.line1, s_active ? "Listening" : "Idle", sizeof(m.line1) - 1);
@@ -183,8 +185,15 @@ static void on_event(const lugo_event_t *ev) {
         // chime on a loop. (Full sleep-until-wake is Phase 2 / MQTT.)
         status_msg_t m = { .play_voice = !s_welcomed_once, .voice = VOICE_CONNECTED, .has_line2 = true };
         s_welcomed_once = true;
-        strncpy(m.line1, "Connected", sizeof(m.line1) - 1);
-        strncpy(m.line2, "Press wake to talk", sizeof(m.line2) - 1);
+        // If this welcome is a wake-triggered reconnect (user already active),
+        // show Listening so the screen doesn't misleadingly say "Press wake".
+        if (s_active) {
+            strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
+            strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
+        } else {
+            strncpy(m.line1, "Connected", sizeof(m.line1) - 1);
+            strncpy(m.line2, "Press wake to talk", sizeof(m.line2) - 1);
+        }
         xQueueSend(s_status_q, &m, 0);
         break;
     }
@@ -216,11 +225,13 @@ static void on_event(const lugo_event_t *ev) {
         }
         break;
     case LUGO_EV_GOODBYE: {
-        // Server idle disconnect. Go idle (mic muted); user presses Wake to talk
-        // again. The WS may auto-reconnect underneath (Phase 1); that's harmless.
+        // Server idle disconnect. Sleep: stop auto-reconnect so we don't
+        // reconnect-storm every idle_timeout; the socket stays closed until the
+        // user presses Wake. Go idle (mic muted).
         s_active = false;
         s_turn_ending = false;
         s_state = APP_LISTENING;
+        ws_client_set_reconnect(false);
         { pkt_t *p; while (xQueueReceive(s_pktq, &p, 0) == pdTRUE) free(p); }  // flush
         audio_spk_reset();
         opus_codec_reset();
@@ -361,6 +372,7 @@ static void idle_watchdog_task(void *arg) {
         uint32_t idle_s = (uint32_t)(esp_timer_get_time() / 1000000) - s_last_activity_s;
         if (idle_s >= (uint32_t)(to + 5)) {
             s_active = false;
+            ws_client_set_reconnect(false);   // sleep the link too
             status_msg_t m = { .play_voice = false, .has_line2 = true };
             strncpy(m.line1, "Idle", sizeof(m.line1) - 1);
             strncpy(m.line2, "Press wake to talk", sizeof(m.line2) - 1);
@@ -394,7 +406,7 @@ void app_main(void) {
         provisioning_start(&cfg);  // does not return
     }
 
-    display_show("WiFi OK", "Connecting gateway...");
+    display_show("WiFi OK", "Starting…");
     ESP_ERROR_CHECK(opus_codec_init());
 
     s_pktq = xQueueCreate(16, sizeof(pkt_t *));   // ~16*60ms buffer ceiling
@@ -423,5 +435,9 @@ void app_main(void) {
     xTaskCreatePinnedToCore(spk_task, "spk", 16384, NULL, 6, NULL, 1);
     xTaskCreatePinnedToCore(mic_task, "mic", 40960, NULL, 5, NULL, 1);
     xTaskCreatePinnedToCore(uplink_task, "uplink", 16384, NULL, 5, NULL, 1);
-    ESP_LOGI(TAG, "running");
+
+    // Connect-on-wake: the WS stays closed (asleep) until the user presses Wake.
+    // No gateway connection is held while idle.
+    display_show("Ready", "Press wake to talk");
+    ESP_LOGI(TAG, "running (asleep — press wake to connect)");
 }

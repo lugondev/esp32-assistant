@@ -16,3 +16,6 @@ esp_err_t ws_client_start(const char *host, int port, bool secure,
 int  ws_client_send_audio(const uint8_t *opus, int len);  // raw opus uplink
 int  ws_client_send_abort(const char *reason);
 bool ws_client_connected(void);
+// Sleep/wake the link. false: stay disconnected after a close (no reconnect
+// storm on idle goodbye). true: allow the reconnect task to re-establish (~1s).
+void ws_client_set_reconnect(bool enabled);

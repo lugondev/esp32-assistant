@@ -11,6 +11,10 @@ static esp_websocket_client_handle_t s_client;
 static ws_event_cb_t s_on_event;
 static ws_audio_cb_t s_on_audio;
 static volatile bool s_connected;
+// Sleep-until-wake: when false, the reconnect task leaves the socket closed.
+// Set false on a server idle `goodbye` so the device sleeps instead of
+// reconnect-storming every idle_timeout; set true again when the user wakes.
+static volatile bool s_reconnect_enabled = true;
 
 // Wakeup handshake params, captured in ws_client_start and sent on CONNECTED.
 static char s_profile[64];
@@ -59,18 +63,51 @@ static void on_ws(void *arg, esp_event_base_t base, int32_t id, void *data) {
     }
 }
 
-// See original rationale: a graceful server CLOSE leaves the built-in reconnect
-// stopped, so we disable it and drive one uniform reconnect here.
-static void ws_reconnect_task(void *arg) {
+static volatile bool s_wake_pending = false;  // one-shot: connect NOW on wake
+
+// Connect-on-wake lifecycle manager (all stop/start happens here, never from a
+// caller's task context). Behaviour by state:
+//   - asleep (idle / after goodbye): keep the socket closed; if it's still open
+//     (manual idle), close it.
+//   - just woken (s_wake_pending): connect immediately for a snappy wake.
+//   - awake but link dropped unexpectedly: reconnect, throttled to ~3s so we
+//     don't restart an in-flight connect attempt.
+static void ws_conn_task(void *arg) {
     (void)arg;
+    int down_ms = 0;
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(3000));
-        if (s_client && !esp_websocket_client_is_connected(s_client)) {
-            ESP_LOGW(TAG, "link down — forcing reconnect");
+        vTaskDelay(pdMS_TO_TICKS(250));
+        bool connected = s_client && esp_websocket_client_is_connected(s_client);
+        if (!s_reconnect_enabled) {                 // asleep
+            if (connected) { ESP_LOGI(TAG, "sleep: closing link"); esp_websocket_client_stop(s_client); }
+            s_wake_pending = false;
+            down_ms = 0;
+            continue;
+        }
+        if (connected) { down_ms = 0; continue; }
+        if (s_wake_pending) {                        // wake -> connect immediately
+            s_wake_pending = false;
+            down_ms = 0;
+            ESP_LOGI(TAG, "wake: connecting");
+            esp_websocket_client_stop(s_client);     // ensure a clean start
+            esp_websocket_client_start(s_client);
+            continue;
+        }
+        down_ms += 250;                              // unexpected drop while awake:
+        if (down_ms >= 3000) {                       // throttled reconnect
+            down_ms = 0;
+            ESP_LOGW(TAG, "link down — reconnecting");
             esp_websocket_client_stop(s_client);
             esp_websocket_client_start(s_client);
         }
     }
+}
+
+// Sleep (false) closes/keeps the link closed until the next wake; wake (true)
+// requests an immediate connect. Only touches flags — ws_conn_task does the work.
+void ws_client_set_reconnect(bool enabled) {
+    s_reconnect_enabled = enabled;
+    if (enabled) s_wake_pending = true;
 }
 
 esp_err_t ws_client_start(const char *host, int port, bool secure,
@@ -88,16 +125,18 @@ esp_err_t ws_client_start(const char *host, int port, bool secure,
 
     esp_websocket_client_config_t wc = {
         .uri = uri, .network_timeout_ms = 10000,
-        .disable_auto_reconnect = true,  // ws_reconnect_task drives reconnects
+        .disable_auto_reconnect = true,  // ws_conn_task drives connect/disconnect
         .buffer_size = 2048,
         .task_stack = 8192,  // on_event() calls into display/i2s on this task
     };
     s_client = esp_websocket_client_init(&wc);
     if (!s_client) return ESP_ERR_NO_MEM;
     esp_websocket_register_events(s_client, WEBSOCKET_EVENT_ANY, on_ws, NULL);
-    esp_err_t err = esp_websocket_client_start(s_client);
-    xTaskCreate(ws_reconnect_task, "ws_reconn", 3072, NULL, 3, NULL);
-    return err;
+    // Connect-on-wake: start asleep (WS closed). ws_conn_task connects on the
+    // first ws_client_set_reconnect(true) — i.e. when the user wakes the device.
+    s_reconnect_enabled = false;
+    xTaskCreate(ws_conn_task, "ws_conn", 3072, NULL, 3, NULL);
+    return ESP_OK;
 }
 
 int ws_client_send_audio(const uint8_t *opus, int len) {
