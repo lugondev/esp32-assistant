@@ -9,6 +9,7 @@
 #include "audio.h"
 #include "opus_codec.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -46,6 +47,11 @@ static volatile bool s_voice_busy = false;
 // callback, read by mic_task.
 static volatile bool s_active = false;
 
+// Idle: server `goodbye` is primary; this device-side watchdog is a backup for a
+// silently dropped WS (no goodbye arrives). idle_timeout_s comes from `welcome`.
+static volatile int     s_idle_timeout_s = 0;   // 0 = no device-side timeout
+static volatile int64_t s_last_activity_us = 0;
+
 // jitter buffer: queue of heap-allocated Opus packets
 typedef struct { uint8_t data[OPUS_MAX_PACKET]; int len; } pkt_t;
 static QueueHandle_t s_pktq;   // holds pkt_t* ; depth ~ 150 ms / 60 ms ≈ a few frames + slack
@@ -65,13 +71,6 @@ static QueueHandle_t s_pktq;   // holds pkt_t* ; depth ~ 150 ms / 60 ms ≈ a fe
 // the tail of our own speech and the STT transcribes it, looping the bot into talking
 // to itself. Raise it if self-talk still happens; lower it to reply-to-speech faster.
 #define SPK_TAIL_GUARD_MS 250
-
-// Set once in app_main before ws_client_start(); read by on_event() to show
-// "host:port" on the session-ready screen without threading cfg through the callback.
-// Sized to match wifi_cfg_t.server_host (WIFI_CFG_HOST_MAX=127 + NUL), so a
-// long configured hostname isn't silently truncated on the status screen.
-static char s_wcfg_host[128];
-static int  s_wcfg_port;
 
 // display_show()/voice_play() touch SPI/I2S hardware directly. Calling them
 // from inside on_event() — which runs on esp_websocket_client's own internal
@@ -115,11 +114,29 @@ static void status_task(void *arg) {
 static void on_button(button_id_t id) {
     switch (id) {
     case BTN_WAKE: {
+        if (s_state == APP_SPEAKING) {
+            // Barge-in: stop the bot NOW, locally, before the network round-trip.
+            // Flush queued packets, drop the committed I2S DMA, reset the decoder
+            // so the next turn starts clean (no click/warble). Then tell the server
+            // to cancel the turn. Connection stays open; go straight to LISTENING so
+            // the user can speak — do NOT toggle to Idle.
+            { pkt_t *p; while (xQueueReceive(s_pktq, &p, 0) == pdTRUE) free(p); }
+            audio_spk_reset();
+            opus_codec_reset();
+            s_turn_ending = false;
+            s_state = APP_LISTENING;
+            s_active = true;
+            s_last_activity_us = esp_timer_get_time();
+            ws_client_send_abort("user");
+            status_msg_t m = { .play_voice = false, .has_line2 = true };
+            strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
+            strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
+            xQueueSend(s_status_q, &m, 0);
+            break;
+        }
+        // Not speaking: toggle idle/listening.
         s_active = !s_active;
-        // If the bot is mid-speech, a Wake press means "stop / let me talk":
-        // tell the gateway to abort the current turn (it replies with
-        // "aborted", which flushes the playback queue in on_event).
-        if (s_state == APP_SPEAKING) ws_client_send_control("abort");
+        s_last_activity_us = esp_timer_get_time();
         status_msg_t m = { .play_voice = false, .has_line2 = true };
         strncpy(m.line1, s_active ? "Listening" : "Idle", sizeof(m.line1) - 1);
         strncpy(m.line2, s_active ? "Speak now" : "Press wake to talk",
@@ -138,11 +155,13 @@ static void on_button(button_id_t id) {
     }
 }
 
-static void on_event(const wsp_event_t *ev) {
+static void on_event(const lugo_event_t *ev) {
+    s_last_activity_us = esp_timer_get_time();  // any server event = activity
     switch (ev->type) {
-    case WSP_EV_SESSION_STARTED: {
+    case LUGO_EV_WELCOME: {
         s_state = APP_LISTENING;
-        ESP_LOGI(TAG, "session ready");
+        if (ev->idle_timeout_s > 0) s_idle_timeout_s = ev->idle_timeout_s;
+        ESP_LOGI(TAG, "session ready (idle_timeout_s=%d)", ev->idle_timeout_s);
         // Connected but idle until the user presses Wake (s_active stays false).
         status_msg_t m = { .play_voice = true, .voice = VOICE_CONNECTED, .has_line2 = true };
         strncpy(m.line1, "Connected", sizeof(m.line1) - 1);
@@ -150,22 +169,31 @@ static void on_event(const wsp_event_t *ev) {
         xQueueSend(s_status_q, &m, 0);
         break;
     }
-    case WSP_EV_USER_TRANSCRIPT: ESP_LOGI(TAG, "you: %s", ev->text); break;
-    case WSP_EV_RESPONSE_TEXT:   ESP_LOGI(TAG, "bot: %s", ev->text); break;
-    case WSP_EV_AUDIO_START:     s_turn_ending = false; s_state = APP_SPEAKING; break;
-    case WSP_EV_TURN_DONE:
-        // Don't open the mic yet — the jitter buffer may still be playing the bot's
-        // voice. Arm the drain hand-off; spk_task returns us to LISTENING once empty.
-        // A text-only turn (no audio was playing) has nothing to drain, so switch now.
+    case LUGO_EV_STT:          ESP_LOGI(TAG, "you: %s", ev->text); break;
+    case LUGO_EV_TTS_SENTENCE: ESP_LOGI(TAG, "bot: %s", ev->text); break;
+    case LUGO_EV_TTS_START:    s_turn_ending = false; s_state = APP_SPEAKING; break;
+    case LUGO_EV_TTS_STOP:
+        // Turn ended (natural end OR server-side abort — both map to tts stop).
+        // Don't open the mic yet: the jitter buffer may still be playing. Arm the
+        // drain hand-off; spk_task returns us to LISTENING once empty. If nothing
+        // is playing (text-only turn / already stopped by local barge-in), switch now.
         if (s_state == APP_SPEAKING) s_turn_ending = true;
         else s_state = APP_LISTENING;
         break;
-    case WSP_EV_ABORTED:
+    case LUGO_EV_GOODBYE: {
+        // Server idle disconnect. Go idle (mic muted); user presses Wake to talk
+        // again. The WS may auto-reconnect underneath (Phase 1); that's harmless.
+        s_active = false;
         s_turn_ending = false;
         s_state = APP_LISTENING;
         { pkt_t *p; while (xQueueReceive(s_pktq, &p, 0) == pdTRUE) free(p); }  // flush
+        status_msg_t m = { .play_voice = false, .has_line2 = true };
+        strncpy(m.line1, "Idle", sizeof(m.line1) - 1);
+        strncpy(m.line2, "Press wake to talk", sizeof(m.line2) - 1);
+        xQueueSend(s_status_q, &m, 0);
         break;
-    case WSP_EV_ERROR: {
+    }
+    case LUGO_EV_ERROR: {
         ESP_LOGE(TAG, "server error: %s", ev->text);
         status_msg_t m = { .play_voice = false, .has_line2 = true };
         strncpy(m.line1, "Error", sizeof(m.line1) - 1);
@@ -173,11 +201,12 @@ static void on_event(const wsp_event_t *ev) {
         xQueueSend(s_status_q, &m, 0);
         break;
     }
-    default: break;
+    default: break;  // LUGO_EV_MCP / LUGO_EV_UNKNOWN
     }
 }
 
 static void on_audio(const uint8_t *data, int len) {
+    s_last_activity_us = esp_timer_get_time();
     if (len <= 0 || len > OPUS_MAX_PACKET) return;
     pkt_t *p = malloc(sizeof(pkt_t));
     if (!p) return;
@@ -261,6 +290,26 @@ static void spk_task(void *arg) {
     }
 }
 
+// Backup for a silently dropped WS where the server's `goodbye` never arrives:
+// if the user is active but nothing has happened for idle_timeout_s + grace, go
+// idle locally. The server remains the primary idle authority.
+static void idle_watchdog_task(void *arg) {
+    (void)arg;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        int to = s_idle_timeout_s;
+        if (!s_active || to <= 0) continue;
+        int64_t idle_us = esp_timer_get_time() - s_last_activity_us;
+        if (idle_us >= (int64_t)(to + 5) * 1000000LL) {
+            s_active = false;
+            status_msg_t m = { .play_voice = false, .has_line2 = true };
+            strncpy(m.line1, "Idle", sizeof(m.line1) - 1);
+            strncpy(m.line2, "Press wake to talk", sizeof(m.line2) - 1);
+            xQueueSend(s_status_q, &m, 0);
+        }
+    }
+}
+
 void app_main(void) {
     ESP_LOGI(TAG, "esp32-assistant booting");
     ESP_ERROR_CHECK(display_init());
@@ -294,18 +343,15 @@ void app_main(void) {
     s_status_q = xQueueCreate(4, sizeof(status_msg_t));
     xTaskCreatePinnedToCore(status_task, "status", 8192, NULL, 4, NULL, 1);
     buttons_start(on_button);  // Wake toggles s_active; Vol +/- adjust volume
+    xTaskCreate(idle_watchdog_task, "idle_wd", 3072, NULL, 3, NULL);
 
     // STT/TTS/language all come from the chatllm profile server-side; the device
-    // configures only which profile to connect to (CONFIG_AA_PROFILE).
-    wsp_config_t wcfg = {
-        .host = cfg.server_host, .port = cfg.server_port,
-        .secure = CONFIG_AA_SERVER_SECURE,
-        .sample_rate = 16000, .output_sample_rate = 16000,
-        .profile = CONFIG_AA_PROFILE,
-    };
-    strncpy(s_wcfg_host, cfg.server_host, sizeof(s_wcfg_host) - 1);
-    s_wcfg_port = cfg.server_port;
-    ESP_ERROR_CHECK(ws_client_start(&wcfg, on_event, on_audio));
+    // configures only which profile to connect to (CONFIG_AA_PROFILE). Downlink
+    // is decoded at 16 kHz to match the device opus decoder.
+    s_last_activity_us = esp_timer_get_time();
+    ESP_ERROR_CHECK(ws_client_start(
+        cfg.server_host, cfg.server_port, CONFIG_AA_SERVER_SECURE,
+        CONFIG_AA_PROFILE, 16000, 16000, 60, on_event, on_audio));
 
     // mic_task runs opus_encode(), which is extraordinarily stack-hungry on
     // ESP32 (SILK wideband analysis buffers live on the stack): measured

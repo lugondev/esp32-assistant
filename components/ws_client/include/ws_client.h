@@ -1,14 +1,18 @@
 #pragma once
 #include "esp_err.h"
-#include "ws_protocol.h"
+#include "lugo_protocol.h"
 #include <stdbool.h>
 #include <stdint.h>
 
-typedef void (*ws_event_cb_t)(const wsp_event_t *ev);
-typedef void (*ws_audio_cb_t)(const uint8_t *data, int len);
+typedef void (*ws_event_cb_t)(const lugo_event_t *ev);
+typedef void (*ws_audio_cb_t)(const uint8_t *opus, int len);
 
-esp_err_t ws_client_start(const wsp_config_t *cfg,
+// Connect to WS /v1/lugo/stream and, on connect, send the Lugo `wakeup`
+// handshake declaring `profile` + audio params. Downlink audio arrives v3-framed
+// and is delivered (opus payload only) via on_audio; JSON events via on_event.
+esp_err_t ws_client_start(const char *host, int port, bool secure,
+                          const char *profile, int in_sr, int out_sr, int frame_ms,
                           ws_event_cb_t on_event, ws_audio_cb_t on_audio);
-int ws_client_send_audio(const uint8_t *opus, int len);
-int ws_client_send_control(const char *type);
+int  ws_client_send_audio(const uint8_t *opus, int len);  // raw opus uplink
+int  ws_client_send_abort(const char *reason);
 bool ws_client_connected(void);
