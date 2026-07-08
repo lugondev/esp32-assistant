@@ -1,6 +1,8 @@
 #include "ws_client.h"
 #include "esp_websocket_client.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <string.h>
 
 static const char *TAG = "ws";
@@ -17,6 +19,15 @@ static void on_ws(void *arg, esp_event_base_t base, int32_t id, void *data) {
         s_connected = true; ESP_LOGI(TAG, "connected"); break;
     case WEBSOCKET_EVENT_DISCONNECTED:
         s_connected = false; ESP_LOGW(TAG, "disconnected"); break;
+    // A server-initiated graceful close arrives as CLOSED, not DISCONNECTED.
+    // Without this the flag stayed true after the gateway ended the session, so
+    // mic_task kept streaming into a dead socket, flooding "client not
+    // connected" errors. ERROR likewise means the link is unusable. Clearing
+    // the flag stops the uplink and lets auto-reconnect re-establish cleanly.
+    case WEBSOCKET_EVENT_CLOSED:
+        s_connected = false; ESP_LOGW(TAG, "closed"); break;
+    case WEBSOCKET_EVENT_ERROR:
+        s_connected = false; ESP_LOGW(TAG, "ws error"); break;
     case WEBSOCKET_EVENT_DATA: {
         // Only act on a complete frame delivered in a single event (no fragmentation).
         bool complete = (d->payload_offset == 0) && (d->data_len == d->payload_len);
@@ -37,6 +48,24 @@ static void on_ws(void *arg, esp_event_base_t base, int32_t id, void *data) {
     }
 }
 
+// The built-in auto-reconnect only fires after an abrupt DISCONNECTED; a
+// graceful server CLOSE frame (the gateway ends the session or restarts) leaves
+// the client stopped, so the device sat dead until a manual reboot. We disable
+// the built-in reconnect and drive one uniform reconnect here: whenever the
+// link is down, stop+start forces a fresh connection (a new session), covering
+// both close and disconnect the same way.
+static void ws_reconnect_task(void *arg) {
+    (void)arg;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(3000));
+        if (s_client && !esp_websocket_client_is_connected(s_client)) {
+            ESP_LOGW(TAG, "link down — forcing reconnect");
+            esp_websocket_client_stop(s_client);
+            esp_websocket_client_start(s_client);
+        }
+    }
+}
+
 esp_err_t ws_client_start(const wsp_config_t *cfg,
                           ws_event_cb_t on_event, ws_audio_cb_t on_audio) {
     s_on_event = on_event; s_on_audio = on_audio;
@@ -44,7 +73,8 @@ esp_err_t ws_client_start(const wsp_config_t *cfg,
     if (wsp_build_uri(uri, sizeof uri, cfg) < 0) return ESP_FAIL;
     ESP_LOGI(TAG, "uri=%s", uri);
     esp_websocket_client_config_t wc = {
-        .uri = uri, .reconnect_timeout_ms = 2000, .network_timeout_ms = 10000,
+        .uri = uri, .network_timeout_ms = 10000,
+        .disable_auto_reconnect = true,  // ws_reconnect_task drives reconnects
         .buffer_size = 2048,
         // Default (4KB, WEBSOCKET_TASK_STACK) overflowed once on_event()
         // started calling into display_show()/voice_play() (SPI/I2S driver
@@ -54,7 +84,9 @@ esp_err_t ws_client_start(const wsp_config_t *cfg,
     s_client = esp_websocket_client_init(&wc);
     if (!s_client) return ESP_ERR_NO_MEM;
     esp_websocket_register_events(s_client, WEBSOCKET_EVENT_ANY, on_ws, NULL);
-    return esp_websocket_client_start(s_client);
+    esp_err_t err = esp_websocket_client_start(s_client);
+    xTaskCreate(ws_reconnect_task, "ws_reconn", 3072, NULL, 3, NULL);
+    return err;
 }
 
 int ws_client_send_audio(const uint8_t *opus, int len) {

@@ -45,12 +45,17 @@ esp_err_t audio_init(void) {
     // of what bit width you ask for) — the RX channel must run at 32-bit
     // slot width or the mic reads garbage/silence. audio_mic_read() shifts
     // each 32-bit frame down to 16-bit PCM.
+    // STEREO (both slots): the DMA delivers a standard 2-slot Philips frame. The
+    // INMP441 only drives one slot (left, L/R pin tied low) and the other stays
+    // silent, so audio_mic_read() keeps the left sample of each frame. MONO mode
+    // still clocked both slots here, yielding sample,0,sample,0 that — read as
+    // contiguous mono — interleaved speech with zeros and garbled STT.
     i2s_chan_config_t rx_cc = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     ESP_ERROR_CHECK(i2s_new_channel(&rx_cc, NULL, &s_rx));
     i2s_std_config_t rx_std = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(16000),
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
-            I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_MONO),
+            I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
         .gpio_cfg = {
             .mclk = I2S_GPIO_UNUSED, .bclk = CONFIG_AA_MIC_SCK,
             .ws = CONFIG_AA_MIC_WS, .dout = I2S_GPIO_UNUSED,
@@ -86,16 +91,26 @@ esp_err_t audio_init(void) {
 
 int audio_mic_read(int16_t *pcm, int samples) {
     if (samples > AUDIO_MIC_MAX_SAMPLES) samples = AUDIO_MIC_MAX_SAMPLES;
-    static int32_t raw[AUDIO_MIC_MAX_SAMPLES];
+    // Two 32-bit slots (L,R) per mono sample — see the STEREO note in audio_init.
+    static int32_t raw[AUDIO_MIC_MAX_SAMPLES * 2];
     size_t bytes_read = 0;
 
     // No lock: s_rx is a dedicated I2S channel read only by mic_task.
-    esp_err_t err = i2s_channel_read(s_rx, raw, samples * sizeof(int32_t), &bytes_read, portMAX_DELAY);
+    esp_err_t err = i2s_channel_read(s_rx, raw, samples * 2 * sizeof(int32_t), &bytes_read, portMAX_DELAY);
     if (err != ESP_OK) return -1;
 
-    int got = (int)(bytes_read / sizeof(int32_t));
-    for (int i = 0; i < got; i++) pcm[i] = (int16_t)(raw[i] >> 16);
-    return got;
+    int frames = (int)(bytes_read / sizeof(int32_t) / 2);  // one mono sample per L,R frame
+    // Keep the left slot (raw[2*i]) — that's where the INMP441 drives data.
+    // INMP441 delivers ~18-bit-deep samples left-justified in the 32-bit slot,
+    // so a straight >>16 (24->16 bit) leaves conversational speech near -60 dBFS
+    // — too quiet for the gateway VAD/STT. Shift less to add ~+30 dB of digital
+    // gain, clamping to int16 range so loud input saturates instead of wrapping.
+    for (int i = 0; i < frames; i++) {
+        int32_t v = raw[2 * i] >> 11;
+        if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
+        pcm[i] = (int16_t)v;
+    }
+    return frames;
 }
 
 int audio_spk_write(const int16_t *pcm, int samples) {

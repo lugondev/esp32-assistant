@@ -1,6 +1,7 @@
 #include "opus_codec.h"
 #include "opus.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 
 static const char *TAG = "opus";
 static OpusEncoder *s_enc;
@@ -21,7 +22,10 @@ esp_err_t opus_codec_init(void) {
 }
 
 int opus_codec_encode(const int16_t *pcm960, uint8_t *out, int out_cap) {
+    int64_t t0 = esp_timer_get_time();  // DIAGNOSTIC
     int n = opus_encode(s_enc, pcm960, OPUS_UP_SAMPLES, out, out_cap);
+    static int dbg = 0;  // DIAGNOSTIC: encode must fit under the 60ms (60000us) frame
+    if ((++dbg % 50) == 0) ESP_LOGW(TAG, "encode %d us -> %d bytes", (int)(esp_timer_get_time() - t0), n);
     return n < 0 ? -1 : n;
 }
 
