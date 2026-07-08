@@ -32,3 +32,7 @@ int opus_codec_decode(const uint8_t *pkt, int pkt_len, int16_t *pcm_out) {
     int n = opus_decode(s_dec, pkt, pkt_len, pcm_out, OPUS_DOWN_SAMPLES_MAX, 0);
     return n < 0 ? -1 : n;
 }
+
+void opus_codec_reset(void) {
+    if (s_dec) opus_decoder_ctl(s_dec, OPUS_RESET_STATE);
+}

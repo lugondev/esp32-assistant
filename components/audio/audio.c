@@ -144,3 +144,12 @@ int audio_spk_write(const int16_t *pcm, int samples) {
     if (err != ESP_OK) return -1;
     return (int)(total_written / sizeof(int16_t));
 }
+
+void audio_spk_reset(void) {
+    xSemaphoreTake(s_tx_mutex, portMAX_DELAY);
+    // Disable+re-enable the TX channel to discard the DMA buffer contents; a
+    // plain zero-write would still play the already-queued tail first.
+    i2s_channel_disable(s_tx);
+    i2s_channel_enable(s_tx);
+    xSemaphoreGive(s_tx_mutex);
+}
