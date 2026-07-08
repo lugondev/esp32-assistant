@@ -66,11 +66,8 @@ static void status_task(void *arg) {
     status_msg_t m;
     for (;;) {
         if (xQueueReceive(s_status_q, &m, portMAX_DELAY) == pdTRUE) {
-            ESP_LOGW(TAG, "status_task: show '%s' voice=%d", m.line1, m.play_voice);  // DIAGNOSTIC
             display_show(m.line1, m.has_line2 ? m.line2 : NULL);
-            ESP_LOGW(TAG, "status_task: display done");  // DIAGNOSTIC
             if (m.play_voice) voice_play(m.voice);
-            ESP_LOGW(TAG, "status_task: voice done");  // DIAGNOSTIC
         }
     }
 }
@@ -90,8 +87,7 @@ static void on_button(button_id_t id) {
         strncpy(m.line1, s_active ? "Listening" : "Idle", sizeof(m.line1) - 1);
         strncpy(m.line2, s_active ? "Speak now" : "Press wake to talk",
                 sizeof(m.line2) - 1);
-        BaseType_t ok = xQueueSend(s_status_q, &m, 0);  // DIAGNOSTIC ok
-        ESP_LOGW(TAG, "on_button WAKE: active=%d queued=%d", s_active, (int)ok);
+        xQueueSend(s_status_q, &m, 0);
         break;
     }
     case BTN_VOL_UP:
@@ -154,29 +150,19 @@ static QueueHandle_t s_uplinkq;
 static void mic_task(void *arg) {
     (void)arg;
     int16_t pcm[OPUS_UP_SAMPLES];
-    int dbg = 0;  // DIAGNOSTIC frame counter (~16 frames/sec)
     for (;;) {
         int got = audio_mic_read(pcm, OPUS_UP_SAMPLES);   // keeps I2S draining always
         if (got != OPUS_UP_SAMPLES) { vTaskDelay(pdMS_TO_TICKS(10)); continue; }
-        // DIAGNOSTIC: peak amplitude tells captured speech apart from silence/garbage
-        int peak = 0;
-        for (int i = 0; i < got; i++) { int a = pcm[i] < 0 ? -pcm[i] : pcm[i]; if (a > peak) peak = a; }
-        bool gate = s_active && s_state == APP_LISTENING && ws_client_connected();
-        bool tick = (++dbg % 16) == 0;
-        if (tick) ESP_LOGW(TAG, "mic: active=%d state=%d conn=%d peak=%d gate=%d",  // DIAGNOSTIC
-                           s_active, (int)s_state, (int)ws_client_connected(), peak, (int)gate);
         // Only stream when the user has activated the conversation (Wake button),
         // the session is ready, and we're not playing the bot (half-duplex).
-        if (!gate) continue;
+        if (!s_active || s_state != APP_LISTENING || !ws_client_connected()) continue;
         uplink_pkt_t *p = malloc(sizeof(uplink_pkt_t));
         if (!p) continue;
         int n = opus_codec_encode(pcm, p->data, sizeof p->data);
         if (n > 0) {
             p->len = n;
             if (xQueueSend(s_uplinkq, &p, 0) != pdTRUE) free(p);   // drop on overflow
-            if (tick) ESP_LOGW(TAG, "mic: enc=%d queued", n);  // DIAGNOSTIC
         } else {
-            if (tick) ESP_LOGW(TAG, "mic: enc returned %d", n);  // DIAGNOSTIC
             free(p);
         }
     }
@@ -185,11 +171,9 @@ static void mic_task(void *arg) {
 static void uplink_task(void *arg) {
     (void)arg;
     uplink_pkt_t *p;
-    int dbg = 0;  // DIAGNOSTIC
     for (;;) {
         if (xQueueReceive(s_uplinkq, &p, pdMS_TO_TICKS(100)) != pdTRUE) continue;
         ws_client_send_audio(p->data, p->len);
-        if ((++dbg % 16) == 0) ESP_LOGW(TAG, "uplink: sent %d bytes (#%d)", p->len, dbg);  // DIAGNOSTIC
         free(p);
     }
 }
