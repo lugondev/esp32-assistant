@@ -89,6 +89,36 @@ static void test_build_wakeup_and_controls(void) {
     CHECK(lugo_build_abort(buf, 4, "user") == -1); // overflow
 }
 
+static void test_mcp_payload_pointer(void) {
+    const char *json =
+        "{\"type\":\"mcp\",\"payload\":{\"jsonrpc\":\"2.0\",\"id\":3,"
+        "\"method\":\"tools/call\",\"params\":{\"name\":\"self.audio.set_volume\","
+        "\"arguments\":{\"volume\":70}}}}";
+    lugo_event_t e;
+    CHECK(lugo_parse_event(json, &e) == 0);
+    CHECK(e.type == LUGO_EV_MCP);
+    CHECK(e.mcp_payload != NULL);
+    CHECK(e.mcp_payload[0] == '{');
+    CHECK(lugo_json_get_int(e.mcp_payload, "id") == 3);
+    char method[32];
+    lugo_json_get_string(e.mcp_payload, "method", method, sizeof method);
+    CHECK(strcmp(method, "tools/call") == 0);
+}
+
+static void test_json_get_bool(void) {
+    CHECK(lugo_json_get_bool("{\"confirm\":true}", "confirm", 0) == 1);
+    CHECK(lugo_json_get_bool("{\"confirm\":false}", "confirm", 1) == 0);
+    CHECK(lugo_json_get_bool("{\"other\":1}", "confirm", 1) == 1);   // default when absent
+    CHECK(lugo_json_get_bool("{\"other\":1}", "confirm", 0) == 0);
+}
+
+static void test_json_find_returns_object_pointer(void) {
+    const char *p = lugo_json_find("{\"a\":1,\"payload\":{\"x\":5}}", "payload");
+    CHECK(p != NULL);
+    CHECK(p[0] == '{');
+    CHECK(lugo_json_get_int(p, "x") == 5);
+}
+
 int main(void) {
     test_frame_roundtrip();
     test_frame_bad();
@@ -97,6 +127,9 @@ int main(void) {
     test_parse_stt_goodbye_error();
     test_parse_not_object();
     test_build_wakeup_and_controls();
+    test_mcp_payload_pointer();
+    test_json_get_bool();
+    test_json_find_returns_object_pointer();
     if (failures) { printf("%d failure(s)\n", failures); return 1; }
     printf("all lugo_protocol tests passed\n");
     return 0;

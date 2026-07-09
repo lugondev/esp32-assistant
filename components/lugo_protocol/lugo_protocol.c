@@ -33,7 +33,7 @@ static const char *skip_ws(const char *p) {
 }
 
 // Locate the value for top-level "key"; returns pointer to first value char or NULL.
-static const char *find_value(const char *json, const char *key) {
+const char *lugo_json_find(const char *json, const char *key) {
     char pat[64];
     int n = snprintf(pat, sizeof pat, "\"%s\"", key);
     if (n < 0 || (size_t)n >= sizeof pat) return NULL;
@@ -45,10 +45,10 @@ static const char *find_value(const char *json, const char *key) {
 }
 
 // Copy string value for key into out (unescaping common escapes). out is "" if absent.
-static void get_string(const char *json, const char *key, char *out, size_t cap) {
+void lugo_json_get_string(const char *json, const char *key, char *out, size_t cap) {
     if (cap == 0) return;
     out[0] = '\0';
-    const char *p = find_value(json, key);
+    const char *p = lugo_json_find(json, key);
     if (!p || *p != '"') return;
     p++;
     size_t o = 0;
@@ -69,12 +69,22 @@ static void get_string(const char *json, const char *key, char *out, size_t cap)
 }
 
 // Read integer value for key; returns 0 if absent/non-numeric.
-static int get_int(const char *json, const char *key) {
-    const char *p = find_value(json, key);
+int lugo_json_get_int(const char *json, const char *key) {
+    const char *p = lugo_json_find(json, key);
     if (!p) return 0;
     char *end;
     long v = strtol(p, &end, 10);
     return end == p ? 0 : (int)v;
+}
+
+// Read boolean value for key ("true"/"false" literal at the value position);
+// default_val if the key is absent.
+int lugo_json_get_bool(const char *json, const char *key, int default_val) {
+    const char *p = lugo_json_find(json, key);
+    if (!p) return default_val;
+    if (!strncmp(p, "true", 4)) return 1;
+    if (!strncmp(p, "false", 5)) return 0;
+    return default_val;
 }
 
 // Append src to buf at *o (cap total), JSON-escaping " \ and control chars.
@@ -112,31 +122,32 @@ int lugo_parse_event(const char *json, lugo_event_t *out) {
     memset(out, 0, sizeof(*out));
     if (*skip_ws(json) != '{') return -1;
     char type[32];
-    get_string(json, "type", type, sizeof type);
+    lugo_json_get_string(json, "type", type, sizeof type);
     if (!strcmp(type, "welcome")) {
         out->type = LUGO_EV_WELCOME;
-        out->sample_rate = get_int(json, "sample_rate");   // inside audio_params; flat scan is fine
-        out->idle_timeout_s = get_int(json, "idle_timeout_s");
+        out->sample_rate = lugo_json_get_int(json, "sample_rate");   // inside audio_params; flat scan is fine
+        out->idle_timeout_s = lugo_json_get_int(json, "idle_timeout_s");
     } else if (!strcmp(type, "stt")) {
         out->type = LUGO_EV_STT;
-        get_string(json, "text", out->text, sizeof out->text);
+        lugo_json_get_string(json, "text", out->text, sizeof out->text);
     } else if (!strcmp(type, "tts")) {
         char state[24];
-        get_string(json, "state", state, sizeof state);
+        lugo_json_get_string(json, "state", state, sizeof state);
         if (!strcmp(state, "start")) out->type = LUGO_EV_TTS_START;
         else if (!strcmp(state, "stop")) out->type = LUGO_EV_TTS_STOP;
         else if (!strcmp(state, "sentence_start")) {
             out->type = LUGO_EV_TTS_SENTENCE;
-            get_string(json, "text", out->text, sizeof out->text);
+            lugo_json_get_string(json, "text", out->text, sizeof out->text);
         } else out->type = LUGO_EV_UNKNOWN;
     } else if (!strcmp(type, "mcp")) {
         out->type = LUGO_EV_MCP;
+        out->mcp_payload = lugo_json_find(json, "payload");
     } else if (!strcmp(type, "goodbye")) {
         out->type = LUGO_EV_GOODBYE;
-        get_string(json, "reason", out->text, sizeof out->text);
+        lugo_json_get_string(json, "reason", out->text, sizeof out->text);
     } else if (!strcmp(type, "error")) {
         out->type = LUGO_EV_ERROR;
-        get_string(json, "message", out->text, sizeof out->text);
+        lugo_json_get_string(json, "message", out->text, sizeof out->text);
     } else {
         out->type = LUGO_EV_UNKNOWN;
     }
