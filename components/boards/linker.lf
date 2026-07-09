@@ -1,0 +1,22 @@
+# Keeps the auto-registration "board_desc" section (see LUGO_BOARD_REGISTER in
+# board.h) under --gc-sections and brackets it with the boundary symbols the
+# registry counts from.
+#
+# SURROUND(board_desc) emits `_board_desc_start` before and `_board_desc_end`
+# after the collected section (consumed as extern arrays in board.c). KEEP()
+# stops the linker from garbage-collecting the entries, which are only
+# referenced via the section, not by name.
+
+[sections:board_desc]
+entries:
+    board_desc+
+
+[scheme:board_desc_scheme]
+entries:
+    board_desc -> flash_rodata
+
+[mapping:board_desc_mapping]
+archive: *
+entries:
+    * (board_desc_scheme);
+        board_desc -> flash_rodata KEEP() SURROUND(board_desc)

@@ -4,6 +4,7 @@
 #include "display.h"
 #include "voice.h"
 #include "buttons.h"
+#include "board.h"
 #include "nvs_flash.h"
 #include "ws_client.h"
 #include "audio.h"
@@ -383,6 +384,7 @@ static void idle_watchdog_task(void *arg) {
 
 void app_main(void) {
     ESP_LOGI(TAG, "esp32-assistant booting");
+    ESP_ERROR_CHECK(board_detect_and_select());
     ESP_ERROR_CHECK(display_init());
     ESP_ERROR_CHECK(audio_init());  // moved earlier: voice_play() needs the codec
                                      // ready before the first status announcement,

@@ -43,4 +43,26 @@ config AA_SPK_DIN
     int "MAX98357A speaker I2S DIN (data into amp) gpio"
     default 7
 
+choice AA_BOARD
+    prompt "Target board"
+    default AA_BOARD_LUGO_S3_ST7789
+    help
+        Which hardware board this firmware runs on. "Auto-detect" compiles all
+        boards into one binary and picks at boot via each board's match() probe.
+
+config AA_BOARD_LUGO_S3_ST7789
+    bool "Lugo S3 (ST7789 display + MAX98357A/INMP441 I2S)"
+config AA_BOARD_AUTODETECT
+    bool "Auto-detect (multi-board single binary)"
+endchoice
+
+config AA_BOARD_FORCE
+    bool
+    default y if !AA_BOARD_AUTODETECT
+
+config AA_BOARD_NAME
+    string
+    default "lugo-s3-st7789" if AA_BOARD_LUGO_S3_ST7789
+    default ""
+
 endmenu
