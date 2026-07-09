@@ -115,7 +115,10 @@ static esp_err_t save_post_handler(httpd_req_t *req) {
     // The form never pre-fills the password field; if left blank, keep the
     // previously-saved one instead of wiping it.
     if (parsed.password[0] == '\0') {
-        strncpy(parsed.password, s_cfg.password, sizeof(parsed.password) - 1);
+        // snprintf (not strncpy) to always NUL-terminate and avoid the riscv
+        // GCC -Werror=stringop-truncation the C3 toolchain raises. Behaviour-
+        // preserving: copies up to sizeof-1 chars, always terminated.
+        snprintf(parsed.password, sizeof(parsed.password), "%s", s_cfg.password);
     }
 
     esp_err_t err = wifi_cfg_save(&parsed);
@@ -158,7 +161,7 @@ void provisioning_start(const wifi_cfg_t *current) {
     provisioning_build_ssid(mac, ssid, sizeof ssid);
 
     wifi_config_t ap_config = { 0 };
-    strncpy((char *)ap_config.ap.ssid, ssid, sizeof(ap_config.ap.ssid) - 1);
+    snprintf((char *)ap_config.ap.ssid, sizeof(ap_config.ap.ssid), "%s", ssid);
     ap_config.ap.ssid_len = strlen(ssid);
     ap_config.ap.channel = 1;
     ap_config.ap.max_connection = 4;

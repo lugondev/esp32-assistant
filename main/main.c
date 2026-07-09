@@ -255,7 +255,12 @@ static void on_event(const lugo_event_t *ev) {
         ESP_LOGE(TAG, "server error: %s", ev->text);
         status_msg_t m = { .play_voice = false, .has_line2 = true };
         strncpy(m.line1, "Error", sizeof(m.line1) - 1);
-        strncpy(m.line2, ev->text, sizeof(m.line2) - 1);
+        // ev->text (256B) is wider than line2, so we intentionally truncate to
+        // the display line. Bounded memcpy + explicit NUL keeps it safe and
+        // avoids the riscv GCC -Werror=stringop/format-truncation on the C3 build.
+        size_t elen = strnlen(ev->text, sizeof(m.line2) - 1);
+        memcpy(m.line2, ev->text, elen);
+        m.line2[elen] = '\0';
         xQueueSend(s_status_q, &m, 0);
         break;
     }
