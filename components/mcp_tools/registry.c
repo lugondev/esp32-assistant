@@ -5,17 +5,9 @@
 extern const mcp_tool_desc_t *const _mcp_tool_start[];
 extern const mcp_tool_desc_t *const _mcp_tool_end[];
 
-// Proof-of-registration tool for this task; Task 4/5 add the real ones and
-// this one can stay (it's a harmless, always-available diagnostic) or be
-// deleted once real tools exist — implementer's call, not load-bearing.
-static mcp_result_t ping_fn(const char *args) {
-    (void)args;
-    return mcp_ok_text("pong");
-}
-LUGO_MCP_TOOL(tool_ping) {
-    .name = "self.ping", .description = "Diagnostic: returns pong",
-    .props = NULL, .requires_confirm = false, .fn = ping_fn,
-};
+// The Task 3 scaffold's self.ping proof tool has been removed now that the
+// real v1 tools exist (audio_tools.c, display_tools.c, gpio_tools.c,
+// device_tools.c) — nothing left here but the linker-section bookkeeping.
 
 void mcp_tools_init(void) {
     // No-op: the registry is populated at link time via the linker section;

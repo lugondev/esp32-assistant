@@ -89,6 +89,14 @@ static void test_build_wakeup_and_controls(void) {
     CHECK(lugo_build_abort(buf, 4, "user") == -1); // overflow
 }
 
+static void test_wakeup_advertises_mcp_feature(void) {
+    char buf[256];
+    int n = lugo_build_wakeup(buf, sizeof buf, "dev", 16000, 24000, 60);
+    CHECK(n > 0);
+    CHECK(strstr(buf, "\"features\"") != NULL);
+    CHECK(strstr(buf, "\"mcp\":true") != NULL);
+}
+
 static void test_mcp_payload_pointer(void) {
     const char *json =
         "{\"type\":\"mcp\",\"payload\":{\"jsonrpc\":\"2.0\",\"id\":3,"
@@ -127,6 +135,7 @@ int main(void) {
     test_parse_stt_goodbye_error();
     test_parse_not_object();
     test_build_wakeup_and_controls();
+    test_wakeup_advertises_mcp_feature();
     test_mcp_payload_pointer();
     test_json_get_bool();
     test_json_find_returns_object_pointer();

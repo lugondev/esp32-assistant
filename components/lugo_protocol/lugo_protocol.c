@@ -159,7 +159,8 @@ int lugo_build_wakeup(char *buf, int buflen, const char *profile,
     int n = snprintf(buf, buflen,
         "{\"type\":\"wakeup\",\"profile\":\"%s\",\"trigger\":\"button\","
         "\"audio_params\":{\"format\":\"opus\",\"sample_rate\":%d,"
-        "\"output_sample_rate\":%d,\"frame_duration\":%d}}",
+        "\"output_sample_rate\":%d,\"frame_duration\":%d},"
+        "\"features\":{\"mcp\":true}}",
         profile ? profile : "", in_sr, out_sr, frame_ms);
     if (n < 0 || n >= buflen) return -1;
     return n;
