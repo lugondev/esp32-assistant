@@ -305,7 +305,7 @@ static void on_event(const lugo_event_t *ev) {
     }
     case LUGO_EV_MCP: {
         if (ev->mcp_payload) {
-            static char resp[640];
+            static char resp[MCP_FRAME_BUF_SIZE];
             int n = mcp_tools_dispatch(ev->mcp_payload, resp, sizeof resp);
             if (n > 0) ws_client_send_mcp(resp);
         }

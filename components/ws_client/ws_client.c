@@ -156,7 +156,7 @@ int ws_client_send_abort(const char *reason) {
 
 int ws_client_send_mcp(const char *json_payload) {
     if (!s_connected) return -1;
-    static char buf[640];
+    static char buf[MCP_FRAME_BUF_SIZE];
     int n = snprintf(buf, sizeof buf, "{\"type\":\"mcp\",\"payload\":%s}", json_payload);
     if (n < 0 || n >= (int)sizeof buf) return -1;
     return esp_websocket_client_send_text(s_client, buf, n, portMAX_DELAY);

@@ -7,6 +7,15 @@
 typedef void (*ws_event_cb_t)(const lugo_event_t *ev);
 typedef void (*ws_audio_cb_t)(const uint8_t *opus, int len);
 
+// Shared size for the two static buffers that carry one mcp_tools_dispatch()
+// response end-to-end: main.c's `resp` (raw dispatch output) and ws_client.c's
+// `buf` (the {"type":"mcp","payload":...} wrapper built from `resp`). Both
+// must stay in lock-step, or the smaller one silently drops the frame (dispatch
+// / snprintf both fail closed rather than overflow). Measured tools/list
+// response for the real 7-tool build is ~1416 bytes; 2048 leaves headroom for
+// future tools without another emergency resize.
+#define MCP_FRAME_BUF_SIZE 2048
+
 // Connect to WS /v1/lugo/stream and, on connect, send the Lugo `wakeup`
 // handshake declaring `profile` + audio params. Downlink audio arrives v3-framed
 // and is delivered (opus payload only) via on_audio; JSON events via on_event.
