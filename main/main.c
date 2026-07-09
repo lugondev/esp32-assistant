@@ -3,6 +3,7 @@
 #include "provisioning.h"
 #include "display.h"
 #include "robot_eyes.h"
+#include "gfx.h"
 #include "voice.h"
 #include "buttons.h"
 #include "board.h"
@@ -138,6 +139,13 @@ static QueueHandle_t s_status_q;
 #define EYES_COLOR 0xFFFF
 #define EYES_BG    0x0000
 
+// How long the confirming text (e.g. "Ready"/"Press wake to talk") stays on
+// screen before the eyes animation takes over. Without this, a show_idle_eyes
+// message went straight to the animation and the text was never visible even
+// for one frame — nothing confirmed WiFi/session state before the device
+// looked "just idle".
+#define IDLE_TEXT_HOLD_MS 1500
+
 static void status_task(void *arg) {
     (void)arg;
     status_msg_t m;
@@ -151,9 +159,12 @@ static void status_task(void *arg) {
     for (;;) {
         TickType_t wait = idle_eyes_active ? pdMS_TO_TICKS(EYES_FRAME_MS) : portMAX_DELAY;
         if (xQueueReceive(s_status_q, &m, wait) == pdTRUE) {
+            // Always show the text first — even for a show_idle_eyes message —
+            // so the transition into idle is visible instead of instant.
+            display_show(m.line1, m.has_line2 ? m.line2 : NULL);
             idle_eyes_active = m.show_idle_eyes && display_width() > 0 && display_height() > 0;
-            if (!idle_eyes_active) {
-                display_show(m.line1, m.has_line2 ? m.line2 : NULL);
+            if (idle_eyes_active) {
+                vTaskDelay(pdMS_TO_TICKS(IDLE_TEXT_HOLD_MS));
             }
             if (m.play_voice) {
                 // Mute the mic for the clip's duration + tail so the announcement
@@ -171,12 +182,10 @@ static void status_task(void *arg) {
             if (!s_eyes_buf) {
                 s_eyes_buf = heap_caps_malloc((size_t)w * band_h * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
                 if (!s_eyes_buf) {
-                    // Fall back to whatever text this message actually carried
-                    // (e.g. the real "Ready"/"Idle" wording), not a hardcoded
-                    // guess — the board still has a working text path.
+                    // Text (m.line1/line2) is already showing from above —
+                    // just stop trying to animate, don't overwrite it again.
                     ESP_LOGE(TAG, "robot_eyes: PSRAM alloc failed, falling back to text");
                     idle_eyes_active = false;
-                    display_show(m.line1, m.has_line2 ? m.line2 : NULL);
                     continue;
                 }
             }
@@ -461,10 +470,40 @@ static void idle_watchdog_task(void *arg) {
     }
 }
 
+// One-time color-pipeline smoke test: 5 real color bars (not the pure
+// white/black the eyes animation ever sends — a wrong RGB565 channel/bit
+// order would be invisible with white/black alone, but not with these).
+// Safe to call before status_task exists: app_main is still the only task
+// touching the panel at this point.
+static void show_boot_color_bars(void) {
+    int w = display_width(), h = display_height();
+    if (w <= 0 || h <= 0) return;   // no pixel panel on this board (flush unset)
+    int band_h = h / 5;
+    if (band_h < 1) band_h = 1;
+    static uint16_t buf[320 * 64];  // one band at a time; covers panels up to 320 wide, 64 tall/band
+    if ((size_t)w * (size_t)band_h > sizeof(buf) / sizeof(buf[0])) {
+        ESP_LOGW(TAG, "boot color test: panel band too large for scratch buffer, skipping");
+        return;
+    }
+    static const uint16_t colors[5] = {
+        0xF800,  // red
+        0x07E0,  // green
+        0x001F,  // blue
+        0xFFFF,  // white
+        0xFFE0,  // yellow
+    };
+    for (int i = 0; i < 5; i++) {
+        gfx_fill_rect(buf, w, band_h, 0, 0, w, band_h, colors[i]);
+        display_flush(0, i * band_h, w, band_h, buf);
+    }
+}
+
 void app_main(void) {
     ESP_LOGI(TAG, "esp32-assistant booting");
     ESP_ERROR_CHECK(board_detect_and_select());
     ESP_ERROR_CHECK(display_init());
+    show_boot_color_bars();
+    vTaskDelay(pdMS_TO_TICKS(2000));  // hold the bars long enough to actually see them
     ESP_ERROR_CHECK(audio_init());  // moved earlier: voice_play() needs the codec
                                      // ready before the first status announcement,
                                      // and audio_init() has no WiFi dependency.
