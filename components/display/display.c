@@ -15,3 +15,4 @@ void display_flush(int x, int y, int w, int h, const uint16_t *rgb565) {
 }
 int display_width(void)  { return s_ops->width; }
 int display_height(void) { return s_ops->height; }
+void display_set_backlight(bool on) { s_ops->set_backlight(on); }

@@ -154,4 +154,12 @@ int ws_client_send_abort(const char *reason) {
     return esp_websocket_client_send_text(s_client, buf, n, portMAX_DELAY);
 }
 
+int ws_client_send_mcp(const char *json_payload) {
+    if (!s_connected) return -1;
+    static char buf[640];
+    int n = snprintf(buf, sizeof buf, "{\"type\":\"mcp\",\"payload\":%s}", json_payload);
+    if (n < 0 || n >= (int)sizeof buf) return -1;
+    return esp_websocket_client_send_text(s_client, buf, n, portMAX_DELAY);
+}
+
 bool ws_client_connected(void) { return s_connected; }

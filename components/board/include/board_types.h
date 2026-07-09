@@ -35,6 +35,8 @@ typedef struct {
     void (*flush)(int x, int y, int w, int h, const uint16_t *rgb565);
     int width;   // panel dimensions in pixels; 0 if flush is NULL
     int height;
+    // Turn the panel backlight on/off. GPIO on/off only, no PWM dimming.
+    void (*set_backlight)(bool on);
 } display_ops_t;
 
 typedef struct {
