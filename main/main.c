@@ -18,6 +18,15 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+// ESP32-C3 is single-core: core 1 does not exist. Pin audio tasks to core 1 on
+// dual-core (S3, keeping them off core 0 where WiFi runs); let the scheduler
+// place them on unicore targets.
+#if CONFIG_FREERTOS_UNICORE
+#define APP_CPU_AUDIO tskNO_AFFINITY
+#else
+#define APP_CPU_AUDIO 1
+#endif
+
 // Bool Kconfig options are undefined (not 0) when unset — provide a fallback.
 #ifndef CONFIG_AA_SERVER_SECURE
 #define CONFIG_AA_SERVER_SECURE 0
@@ -414,7 +423,7 @@ void app_main(void) {
     s_pktq = xQueueCreate(16, sizeof(pkt_t *));   // ~16*60ms buffer ceiling
     s_uplinkq = xQueueCreate(16, sizeof(uplink_pkt_t *));
     s_status_q = xQueueCreate(4, sizeof(status_msg_t));
-    xTaskCreatePinnedToCore(status_task, "status", 8192, NULL, 4, NULL, 1);
+    xTaskCreatePinnedToCore(status_task, "status", 8192, NULL, 4, NULL, APP_CPU_AUDIO);
     buttons_start(on_button);  // Wake toggles s_active; Vol +/- adjust volume
     xTaskCreate(idle_watchdog_task, "idle_wd", 3072, NULL, 3, NULL);
 
@@ -434,9 +443,9 @@ void app_main(void) {
     // allocs, FreeRTOS tick). 40960 gives a healthy ~17KB margin.
     // spk_task runs opus_decode() (much lighter, ~4.6KB peak); uplink_task
     // owns the ws send chain.
-    xTaskCreatePinnedToCore(spk_task, "spk", 16384, NULL, 6, NULL, 1);
-    xTaskCreatePinnedToCore(mic_task, "mic", 40960, NULL, 5, NULL, 1);
-    xTaskCreatePinnedToCore(uplink_task, "uplink", 16384, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(spk_task, "spk", 16384, NULL, 6, NULL, APP_CPU_AUDIO);
+    xTaskCreatePinnedToCore(mic_task, "mic", 40960, NULL, 5, NULL, APP_CPU_AUDIO);
+    xTaskCreatePinnedToCore(uplink_task, "uplink", 16384, NULL, 5, NULL, APP_CPU_AUDIO);
 
     // Connect-on-wake: the WS stays closed (asleep) until the user presses Wake.
     // No gateway connection is held while idle.

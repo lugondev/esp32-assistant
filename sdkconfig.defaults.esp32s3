@@ -1,0 +1,8 @@
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# Opus encode of real speech at 160MHz/-Og exceeded the 60ms frame budget
+# (IDLE1 starved → task WDT). Run at 240MHz, -O2.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y

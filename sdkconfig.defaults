@@ -1,30 +1,17 @@
 CONFIG_IDF_TARGET="esp32s3"
-CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_FREERTOS_HZ=1000
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
-CONFIG_SPIRAM=y
-CONFIG_SPIRAM_MODE_OCT=y
-CONFIG_SPIRAM_SPEED_80M=y
-CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=y
-
-# Opus encode of real (non-silent) speech is CPU-heavy: at the stock 160MHz +
-# -Og debug build it exceeded the 60ms frame budget, pinning mic_task on core 1
-# so IDLE1 starved (task WDT) and status_task never repainted (Wake looked
-# dead). Run the S3 at full 240MHz and build -O2 so a 60ms frame encodes well
-# under real time.
-CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 
 # Default 512 bytes is too small for real phone browsers hitting the
-# provisioning captive portal (Accept/Accept-Language/client-hint headers
-# routinely exceed it, causing "Header fields are too long" / HTTP 431).
+# provisioning captive portal (headers exceed it → HTTP 431).
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
 CONFIG_HTTPD_MAX_URI_LEN=1024
 
-# Default 2304 bytes overflows once WebSocket event handling (on_event() in
-# main.c, invoked via the default event loop) started calling into
-# display_show()/voice_play() (SPI/I2S driver calls) — crashed right after
-# "session ready" every time.
+# Default 2304 overflows once on_event() calls display_show()/voice_play()
+# (SPI/I2S) from the system event task.
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=8192
+
+CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=y
