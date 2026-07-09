@@ -7,6 +7,10 @@ SRC_PROVISIONING_FORM = ../components/provisioning/provisioning_form.c
 SRC_DISPLAY_FONT = ../components/display/display_font.c
 SRC_LUGO_PROTOCOL = ../components/lugo_protocol/lugo_protocol.c
 
+MCP_CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
+             -I../components/mcp_server/include -I../components/lugo_protocol/include
+SRC_MCP_SERVER = ../components/mcp_server/mcp_server.c ../components/lugo_protocol/lugo_protocol.c
+
 BOARD_CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
                -I../components/board/include -Ishims
 SRC_BOARD_SEL = ../components/board/board_select.c ../components/board/board_active.c
@@ -24,11 +28,12 @@ ROBOT_EYES_CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
 SRC_ROBOT_EYES = ../components/robot_eyes/robot_eyes.c ../components/gfx/gfx.c
 
 .PHONY: test
-test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_protocol test_board_select test_board_facades test_gfx test_robot_eyes
+test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_protocol test_mcp_server test_board_select test_board_facades test_gfx test_robot_eyes
 	./test_provisioning_ssid
 	./test_provisioning_form
 	./test_display_font
 	./test_lugo_protocol
+	./test_mcp_server
 	./test_board_select
 	./test_board_facades
 	./test_gfx
@@ -45,6 +50,9 @@ test_display_font: test_display_font.c $(SRC_DISPLAY_FONT)
 
 test_lugo_protocol: test_lugo_protocol.c $(SRC_LUGO_PROTOCOL)
 	$(CC) $(CFLAGS) -o $@ $^
+
+test_mcp_server: test_mcp_server.c $(SRC_MCP_SERVER)
+	$(CC) $(MCP_CFLAGS) -o $@ $^
 
 test_board_select: test_board_select.c $(SRC_BOARD_SEL)
 	$(CC) $(BOARD_CFLAGS) -o $@ $^
@@ -63,6 +71,7 @@ clean:
 	       test_provisioning_form test_provisioning_form.dSYM \
 	       test_display_font test_display_font.dSYM \
 	       test_lugo_protocol test_lugo_protocol.dSYM \
+	       test_mcp_server test_mcp_server.dSYM \
 	       test_board_select test_board_select.dSYM \
 	       test_board_facades test_board_facades.dSYM \
 	       test_gfx test_gfx.dSYM \
