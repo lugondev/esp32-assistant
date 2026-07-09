@@ -11,13 +11,19 @@ BOARD_CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
                -I../components/board/include -Ishims
 SRC_BOARD_SEL = ../components/board/board_select.c ../components/board/board_active.c
 
+FACADE_CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
+                -I../components/board/include -I../components/audio/include \
+                -I../components/display/include -I../components/buttons/include -Ishims
+SRC_FACADES = ../components/board/board_active.c ../components/audio/audio.c
+
 .PHONY: test
-test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_protocol test_board_select
+test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_protocol test_board_select test_board_facades
 	./test_provisioning_ssid
 	./test_provisioning_form
 	./test_display_font
 	./test_lugo_protocol
 	./test_board_select
+	./test_board_facades
 
 test_provisioning_ssid: test_provisioning_ssid.c $(SRC_PROVISIONING_SSID)
 	$(CC) $(CFLAGS) -o $@ $^
@@ -34,9 +40,13 @@ test_lugo_protocol: test_lugo_protocol.c $(SRC_LUGO_PROTOCOL)
 test_board_select: test_board_select.c $(SRC_BOARD_SEL)
 	$(CC) $(BOARD_CFLAGS) -o $@ $^
 
+test_board_facades: test_board_facades.c $(SRC_FACADES)
+	$(CC) $(FACADE_CFLAGS) -o $@ $^
+
 clean:
 	rm -rf test_provisioning_ssid test_provisioning_ssid.dSYM \
 	       test_provisioning_form test_provisioning_form.dSYM \
 	       test_display_font test_display_font.dSYM \
 	       test_lugo_protocol test_lugo_protocol.dSYM \
-	       test_board_select test_board_select.dSYM
+	       test_board_select test_board_select.dSYM \
+	       test_board_facades test_board_facades.dSYM

@@ -4,6 +4,7 @@ test/test_provisioning_ssid
 test/test_provisioning_form
 test/test_display_font
 test/test_board_select
+test/test_board_facades
 test/*.dSYM/
 
 # ESP-IDF build output

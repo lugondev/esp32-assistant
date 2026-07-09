@@ -1,155 +1,17 @@
 #include "audio.h"
-#include "driver/i2s_std.h"
-#include "esp_log.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
+#include "board.h"
 
-static const char *TAG = "audio";
-static i2s_chan_handle_t s_rx;  // INMP441 mic, I2S_NUM_0, RX only
-static i2s_chan_handle_t s_tx;  // MAX98357A speaker, I2S_NUM_1, TX only
-// Serializes ONLY the two speaker writers (spk_task + voice_play) so they don't
-// interleave on the TX channel or race on the static scratch buffer below.
-// The mic RX channel (I2S_NUM_0) is a separate, independently thread-safe I2S
-// channel with a single reader (mic_task), so it must NOT share this lock — if
-// mic_task held it across its blocking i2s_channel_read(), the lower-priority
-// status_task could never acquire it for voice_play() and would hang forever.
-static SemaphoreHandle_t s_tx_mutex;
-
-// Largest samples value any caller passes to audio_mic_read() (mic_task in
-// main.c reads OPUS_UP_SAMPLES == 960 at a time). Sized as a fixed buffer
-// (not a VLA) to keep stack usage bounded and predictable.
-#define AUDIO_MIC_MAX_SAMPLES 960
-
-// Software output volume (0..100). MAX98357A has no hardware volume, so
-// audio_spk_write() scales samples by this before the I2S write.
-static volatile int s_volume = 80;
-#define AUDIO_SPK_SCRATCH 512  // static scratch for volume-scaled chunks
-
-void audio_set_volume(int pct) {
-    if (pct < 0) pct = 0;
-    if (pct > 100) pct = 100;
-    s_volume = pct;
-}
-int audio_get_volume(void) { return s_volume; }
-int audio_adjust_volume(int delta) {
-    int v = s_volume + delta;
-    if (v < 0) v = 0;
-    if (v > 100) v = 100;
-    s_volume = v;
-    return v;
-}
+// Dispatch to the active board's audio driver. board_detect_and_select() must
+// run (in app_main) before audio_init().
+static const audio_ops_t *s_ops;
 
 esp_err_t audio_init(void) {
-    // Mic: INMP441 outputs 24-bit samples left-justified in a 32-bit I2S
-    // frame (it always clocks 32 SCK cycles per WS half-period, regardless
-    // of what bit width you ask for) — the RX channel must run at 32-bit
-    // slot width or the mic reads garbage/silence. audio_mic_read() shifts
-    // each 32-bit frame down to 16-bit PCM.
-    // STEREO (both slots): the DMA delivers a standard 2-slot Philips frame. The
-    // INMP441 only drives one slot (left, L/R pin tied low) and the other stays
-    // silent, so audio_mic_read() keeps the left sample of each frame. MONO mode
-    // still clocked both slots here, yielding sample,0,sample,0 that — read as
-    // contiguous mono — interleaved speech with zeros and garbled STT.
-    i2s_chan_config_t rx_cc = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
-    ESP_ERROR_CHECK(i2s_new_channel(&rx_cc, NULL, &s_rx));
-    i2s_std_config_t rx_std = {
-        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(16000),
-        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
-            I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
-        .gpio_cfg = {
-            .mclk = I2S_GPIO_UNUSED, .bclk = CONFIG_AA_MIC_SCK,
-            .ws = CONFIG_AA_MIC_WS, .dout = I2S_GPIO_UNUSED,
-            .din = CONFIG_AA_MIC_SD,
-        },
-    };
-    ESP_ERROR_CHECK(i2s_channel_init_std_mode(s_rx, &rx_std));
-    ESP_ERROR_CHECK(i2s_channel_enable(s_rx));
-
-    // Speaker: MAX98357A takes standard 16-bit I2S directly, no bit-shift
-    // conversion needed on the way out.
-    i2s_chan_config_t tx_cc = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_1, I2S_ROLE_MASTER);
-    ESP_ERROR_CHECK(i2s_new_channel(&tx_cc, &s_tx, NULL));
-    i2s_std_config_t tx_std = {
-        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(16000),
-        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
-            I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
-        .gpio_cfg = {
-            .mclk = I2S_GPIO_UNUSED, .bclk = CONFIG_AA_SPK_BCLK,
-            .ws = CONFIG_AA_SPK_LRC, .dout = CONFIG_AA_SPK_DIN,
-            .din = I2S_GPIO_UNUSED,
-        },
-    };
-    ESP_ERROR_CHECK(i2s_channel_init_std_mode(s_tx, &tx_std));
-    ESP_ERROR_CHECK(i2s_channel_enable(s_tx));
-
-    s_tx_mutex = xSemaphoreCreateMutex();
-    if (!s_tx_mutex) { ESP_LOGE(TAG, "mutex create failed"); return ESP_FAIL; }
-
-    ESP_LOGI(TAG, "audio ready");
-    return ESP_OK;
+    s_ops = board_active()->audio;
+    return s_ops->init(board_active()->audio_cfg);
 }
-
-int audio_mic_read(int16_t *pcm, int samples) {
-    if (samples > AUDIO_MIC_MAX_SAMPLES) samples = AUDIO_MIC_MAX_SAMPLES;
-    // Two 32-bit slots (L,R) per mono sample — see the STEREO note in audio_init.
-    static int32_t raw[AUDIO_MIC_MAX_SAMPLES * 2];
-    size_t bytes_read = 0;
-
-    // No lock: s_rx is a dedicated I2S channel read only by mic_task.
-    esp_err_t err = i2s_channel_read(s_rx, raw, samples * 2 * sizeof(int32_t), &bytes_read, portMAX_DELAY);
-    if (err != ESP_OK) return -1;
-
-    int frames = (int)(bytes_read / sizeof(int32_t) / 2);  // one mono sample per L,R frame
-    // Keep the left slot (raw[2*i]) — that's where the INMP441 drives data.
-    // INMP441 delivers ~18-bit-deep samples left-justified in the 32-bit slot,
-    // so a straight >>16 (24->16 bit) leaves conversational speech near -60 dBFS
-    // — too quiet for the gateway VAD/STT. Shift less to add ~+30 dB of digital
-    // gain, clamping to int16 range so loud input saturates instead of wrapping.
-    for (int i = 0; i < frames; i++) {
-        int32_t v = raw[2 * i] >> 11;
-        if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
-        pcm[i] = (int16_t)v;
-    }
-    return frames;
-}
-
-int audio_spk_write(const int16_t *pcm, int samples) {
-    int vol = s_volume;
-    size_t total_written = 0;
-    esp_err_t err = ESP_OK;
-
-    xSemaphoreTake(s_tx_mutex, portMAX_DELAY);
-    if (vol >= 100) {
-        // Passthrough — no scaling needed.
-        err = i2s_channel_write(s_tx, pcm, samples * sizeof(int16_t),
-                                &total_written, portMAX_DELAY);
-    } else {
-        // Scale in chunks through a static scratch buffer (input is const).
-        static int16_t scratch[AUDIO_SPK_SCRATCH];
-        int off = 0;
-        while (off < samples) {
-            int chunk = samples - off;
-            if (chunk > AUDIO_SPK_SCRATCH) chunk = AUDIO_SPK_SCRATCH;
-            for (int i = 0; i < chunk; i++)
-                scratch[i] = (int16_t)(((int32_t)pcm[off + i] * vol) / 100);
-            size_t bw = 0;
-            err = i2s_channel_write(s_tx, scratch, chunk * sizeof(int16_t),
-                                    &bw, portMAX_DELAY);
-            total_written += bw;
-            if (err != ESP_OK) break;
-            off += chunk;
-        }
-    }
-    xSemaphoreGive(s_tx_mutex);
-    if (err != ESP_OK) return -1;
-    return (int)(total_written / sizeof(int16_t));
-}
-
-void audio_spk_reset(void) {
-    xSemaphoreTake(s_tx_mutex, portMAX_DELAY);
-    // Disable+re-enable the TX channel to discard the DMA buffer contents; a
-    // plain zero-write would still play the already-queued tail first.
-    i2s_channel_disable(s_tx);
-    i2s_channel_enable(s_tx);
-    xSemaphoreGive(s_tx_mutex);
-}
+int  audio_mic_read(int16_t *pcm, int samples)     { return s_ops->mic_read(pcm, samples); }
+int  audio_spk_write(const int16_t *pcm, int n)    { return s_ops->spk_write(pcm, n); }
+void audio_spk_reset(void)                          { s_ops->spk_reset(); }
+void audio_set_volume(int pct)                      { s_ops->set_volume(pct); }
+int  audio_get_volume(void)                         { return s_ops->get_volume(); }
+int  audio_adjust_volume(int delta)                 { return s_ops->adjust_volume(delta); }
