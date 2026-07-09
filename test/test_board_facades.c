@@ -29,11 +29,18 @@ static const speaker_ops_t MOCK_SPEAKER = {
     .set_volume = spk_setv, .get_volume = spk_getv, .adjust_volume = spk_adjv,
 };
 // ---- mock display driver ----
-static int d_init_calls, d_show_calls;
+static int d_init_calls, d_show_calls, d_flush_calls;
 static const char *d_last1;
+static int d_last_x, d_last_y, d_last_w, d_last_h;
+static const uint16_t *d_last_buf;
 static esp_err_t d_init(const void *cfg) { (void)cfg; d_init_calls++; return ESP_OK; }
 static void d_show(const char *l1, const char *l2) { (void)l2; d_show_calls++; d_last1 = l1; }
-static const display_ops_t MOCK_DISPLAY = { .init=d_init, .show=d_show };
+static void d_flush(int x, int y, int w, int h, const uint16_t *buf) {
+    d_flush_calls++; d_last_x=x; d_last_y=y; d_last_w=w; d_last_h=h; d_last_buf=buf;
+}
+static const display_ops_t MOCK_DISPLAY = {
+    .init=d_init, .show=d_show, .flush=d_flush, .width=64, .height=32,
+};
 
 // ---- mock buttons driver ----
 static int b_start_calls;
@@ -65,6 +72,17 @@ static void test_display_facade_dispatches(void) {
     CHECK(d_last1 != NULL && strcmp(d_last1, "hello") == 0);
 }
 
+static void test_display_facade_dispatches_flush_and_dims(void) {
+    board_set(&MOCK_BOARD);
+    uint16_t pixels[4] = {1, 2, 3, 4};
+    display_flush(5, 6, 2, 2, pixels);
+    CHECK(d_flush_calls == 1);
+    CHECK(d_last_x == 5 && d_last_y == 6 && d_last_w == 2 && d_last_h == 2);
+    CHECK(d_last_buf == pixels);
+    CHECK(display_width() == 64);
+    CHECK(display_height() == 32);
+}
+
 static void noop_cb(button_id_t id) { (void)id; }
 static void test_buttons_facade_dispatches(void) {
     board_set(&MOCK_BOARD);
@@ -75,6 +93,7 @@ static void test_buttons_facade_dispatches(void) {
 int main(void) {
     test_audio_facade_dispatches();
     test_display_facade_dispatches();
+    test_display_facade_dispatches_flush_and_dims();
     test_buttons_facade_dispatches();
     printf(failures ? "FAILED (%d)\n" : "OK\n", failures);
     return failures ? 1 : 0;

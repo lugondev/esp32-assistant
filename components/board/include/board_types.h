@@ -28,6 +28,13 @@ typedef struct {
 typedef struct {
     esp_err_t (*init)(const void *cfg);
     void (*show)(const char *line1, const char *line2);
+    // Blits an RGB565 buffer at (x,y), size w*h, straight to the panel — the
+    // pixel-level counterpart to show(), used for images/animation instead
+    // of the 2-line text path. NULL on boards with no pixel-addressable
+    // panel (must be checked before calling, same as the battery op pattern).
+    void (*flush)(int x, int y, int w, int h, const uint16_t *rgb565);
+    int width;   // panel dimensions in pixels; 0 if flush is NULL
+    int height;
 } display_ops_t;
 
 typedef struct {

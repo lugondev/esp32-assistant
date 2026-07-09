@@ -16,14 +16,23 @@ FACADE_CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
                 -I../components/display/include -I../components/buttons/include -Ishims
 SRC_FACADES = ../components/board/board_active.c ../components/audio/audio.c ../components/display/display.c ../components/buttons/buttons.c
 
+GFX_CFLAGS = -std=c11 -Wall -Wextra -g -O0 -I../components/gfx/include
+SRC_GFX = ../components/gfx/gfx.c
+
+ROBOT_EYES_CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
+                     -I../components/robot_eyes/include -I../components/gfx/include
+SRC_ROBOT_EYES = ../components/robot_eyes/robot_eyes.c ../components/gfx/gfx.c
+
 .PHONY: test
-test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_protocol test_board_select test_board_facades
+test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_protocol test_board_select test_board_facades test_gfx test_robot_eyes
 	./test_provisioning_ssid
 	./test_provisioning_form
 	./test_display_font
 	./test_lugo_protocol
 	./test_board_select
 	./test_board_facades
+	./test_gfx
+	./test_robot_eyes
 
 test_provisioning_ssid: test_provisioning_ssid.c $(SRC_PROVISIONING_SSID)
 	$(CC) $(CFLAGS) -o $@ $^
@@ -43,10 +52,18 @@ test_board_select: test_board_select.c $(SRC_BOARD_SEL)
 test_board_facades: test_board_facades.c $(SRC_FACADES)
 	$(CC) $(FACADE_CFLAGS) -o $@ $^
 
+test_gfx: test_gfx.c $(SRC_GFX)
+	$(CC) $(GFX_CFLAGS) -o $@ $^
+
+test_robot_eyes: test_robot_eyes.c $(SRC_ROBOT_EYES)
+	$(CC) $(ROBOT_EYES_CFLAGS) -o $@ $^
+
 clean:
 	rm -rf test_provisioning_ssid test_provisioning_ssid.dSYM \
 	       test_provisioning_form test_provisioning_form.dSYM \
 	       test_display_font test_display_font.dSYM \
 	       test_lugo_protocol test_lugo_protocol.dSYM \
 	       test_board_select test_board_select.dSYM \
-	       test_board_facades test_board_facades.dSYM
+	       test_board_facades test_board_facades.dSYM \
+	       test_gfx test_gfx.dSYM \
+	       test_robot_eyes test_robot_eyes.dSYM

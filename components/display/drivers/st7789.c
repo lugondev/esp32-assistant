@@ -126,7 +126,20 @@ static void st7789_show(const char *line1, const char *line2) {
     }
 }
 
+// Raw pixel blit for images/animation. Not host-tested — same as
+// st7789_init/draw_char/clear_screen above, this only exercises real SPI
+// hardware. esp_lcd_panel_draw_bitmap auto-chunks large transfers against
+// the bus's max_transfer_sz (see st7789_init), so arbitrary w*h is safe to
+// pass through directly, same as clear_screen's larger-than-max_transfer_sz
+// chunked writes already rely on.
+static void st7789_flush(int x, int y, int w, int h, const uint16_t *rgb565) {
+    esp_lcd_panel_draw_bitmap(s_panel, x, y, x + w, y + h, rgb565);
+}
+
 const display_ops_t display_st7789_ops = {
     .init = st7789_init,
     .show = st7789_show,
+    .flush = st7789_flush,
+    .width = DISP_WIDTH,
+    .height = DISP_HEIGHT,
 };
