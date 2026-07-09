@@ -1,6 +1,7 @@
 #include "board.h"
 #include "audio.h"
 #include "display.h"
+#include "buttons.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -29,7 +30,12 @@ static esp_err_t d_init(const void *cfg) { (void)cfg; d_init_calls++; return ESP
 static void d_show(const char *l1, const char *l2) { (void)l2; d_show_calls++; d_last1 = l1; }
 static const display_ops_t MOCK_DISPLAY = { .init=d_init, .show=d_show };
 
-static const board_t MOCK_BOARD = { .name="mock", .audio=&MOCK_AUDIO, .display=&MOCK_DISPLAY };
+// ---- mock buttons driver ----
+static int b_start_calls;
+static void b_start(void (*cb)(button_id_t)) { (void)cb; b_start_calls++; }
+static const buttons_ops_t MOCK_BUTTONS = { .start = b_start };
+
+static const board_t MOCK_BOARD = { .name="mock", .audio=&MOCK_AUDIO, .display=&MOCK_DISPLAY, .buttons=&MOCK_BUTTONS };
 
 static void test_audio_facade_dispatches(void) {
     board_set(&MOCK_BOARD);
@@ -52,9 +58,17 @@ static void test_display_facade_dispatches(void) {
     CHECK(d_last1 != NULL && strcmp(d_last1, "hello") == 0);
 }
 
+static void noop_cb(button_id_t id) { (void)id; }
+static void test_buttons_facade_dispatches(void) {
+    board_set(&MOCK_BOARD);
+    buttons_start(noop_cb);
+    CHECK(b_start_calls == 1);
+}
+
 int main(void) {
     test_audio_facade_dispatches();
     test_display_facade_dispatches();
+    test_buttons_facade_dispatches();
     printf(failures ? "FAILED (%d)\n" : "OK\n", failures);
     return failures ? 1 : 0;
 }
