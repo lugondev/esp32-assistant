@@ -3,6 +3,7 @@ test/test_lugo_protocol
 test/test_provisioning_ssid
 test/test_provisioning_form
 test/test_display_font
+test/test_board_select
 test/*.dSYM/
 
 # ESP-IDF build output
