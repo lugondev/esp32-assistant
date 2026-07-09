@@ -13,13 +13,17 @@ typedef enum {
 
 typedef struct {
     esp_err_t (*init)(const void *cfg);
-    int  (*mic_read)(int16_t *pcm, int samples);
-    int  (*spk_write)(const int16_t *pcm, int samples);
-    void (*spk_reset)(void);
-    void (*set_volume)(int pct);
-    int  (*get_volume)(void);
-    int  (*adjust_volume)(int delta);
-} audio_ops_t;
+    int       (*read)(int16_t *pcm, int samples);   // returns frames read
+} mic_ops_t;
+
+typedef struct {
+    esp_err_t (*init)(const void *cfg);
+    int       (*write)(const int16_t *pcm, int samples);  // returns samples written
+    void      (*reset)(void);
+    void      (*set_volume)(int pct);
+    int       (*get_volume)(void);
+    int       (*adjust_volume)(int delta);
+} speaker_ops_t;
 
 typedef struct {
     esp_err_t (*init)(const void *cfg);
@@ -32,11 +36,13 @@ typedef struct {
 
 typedef struct board {
     const char          *name;
-    const audio_ops_t   *audio;
+    const mic_ops_t     *mic;
+    const speaker_ops_t *speaker;
     const display_ops_t *display;
     const buttons_ops_t *buttons;
     // const void *net;         // RESERVED for a future 4G/other-transport board
-    const void          *audio_cfg;    // driver-specific pin/config blob
+    const void          *mic_cfg;
+    const void          *speaker_cfg;
     const void          *display_cfg;
     const void          *buttons_cfg;
     bool               (*match)(void); // true if firmware is running on this board

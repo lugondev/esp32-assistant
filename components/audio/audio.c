@@ -1,17 +1,21 @@
 #include "audio.h"
 #include "board.h"
 
-// Dispatch to the active board's audio driver. board_detect_and_select() must
-// run (in app_main) before audio_init().
-static const audio_ops_t *s_ops;
+// Dispatch the combined app-facing audio API to the board's independent mic and
+// speaker drivers. board_detect_and_select() must run (app_main) before audio_init().
+static const mic_ops_t     *s_mic;
+static const speaker_ops_t *s_spk;
 
 esp_err_t audio_init(void) {
-    s_ops = board_active()->audio;
-    return s_ops->init(board_active()->audio_cfg);
+    s_mic = board_active()->mic;
+    s_spk = board_active()->speaker;
+    esp_err_t err = s_mic->init(board_active()->mic_cfg);
+    if (err != ESP_OK) return err;
+    return s_spk->init(board_active()->speaker_cfg);
 }
-int  audio_mic_read(int16_t *pcm, int samples)     { return s_ops->mic_read(pcm, samples); }
-int  audio_spk_write(const int16_t *pcm, int n)    { return s_ops->spk_write(pcm, n); }
-void audio_spk_reset(void)                          { s_ops->spk_reset(); }
-void audio_set_volume(int pct)                      { s_ops->set_volume(pct); }
-int  audio_get_volume(void)                         { return s_ops->get_volume(); }
-int  audio_adjust_volume(int delta)                 { return s_ops->adjust_volume(delta); }
+int  audio_mic_read(int16_t *pcm, int samples)  { return s_mic->read(pcm, samples); }
+int  audio_spk_write(const int16_t *pcm, int n) { return s_spk->write(pcm, n); }
+void audio_spk_reset(void)                       { s_spk->reset(); }
+void audio_set_volume(int pct)                   { s_spk->set_volume(pct); }
+int  audio_get_volume(void)                      { return s_spk->get_volume(); }
+int  audio_adjust_volume(int delta)              { return s_spk->adjust_volume(delta); }
