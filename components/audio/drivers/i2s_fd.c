@@ -85,7 +85,7 @@ static int fd_spk_write(const int16_t *pcm, int samples) {
         for (int i = 0; i < chunk; i++) {
             int32_t s = pcm[off + i];
             if (vol < 100) s = (s * vol) / 100;
-            int32_t slot = s << 16;               // 16-bit PCM into 32-bit slot MSBs
+            int32_t slot = (int32_t)((uint32_t)s << 16);   // 16-bit PCM into 32-bit slot MSBs (unsigned shift avoids signed-shift UB)
             frame[2 * i] = slot; frame[2 * i + 1] = slot;   // duplicate L,R
         }
         size_t bw = 0;
