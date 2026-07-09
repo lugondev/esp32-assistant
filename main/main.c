@@ -125,9 +125,16 @@ typedef struct {
 } status_msg_t;
 static QueueHandle_t s_status_q;
 
-// ~30fps; only used while idle_eyes_active, so it doesn't affect the queue's
-// normal portMAX_DELAY responsiveness to real status messages.
-#define EYES_FRAME_MS 33
+// Real ceiling, not a nice round number: the panel's SPI bus is clocked at
+// 4MHz single-line (st7789_init's pclk_hz) = ~500KB/s. Flushing only the
+// eyes' dirty band (robot_eyes_dirty_band — about half the panel's rows;
+// horizontally the two eyes already span nearly the full width at this
+// geometry, so cropping columns too wouldn't save much more) is still
+// ~57KB on a 240-wide panel, i.e. ~115ms/frame. This constant reflects
+// that bus-bound ceiling (~8-9fps) rather than a rate this hardware can't
+// actually deliver; only used while idle_eyes_active, so it doesn't affect
+// the queue's normal portMAX_DELAY responsiveness to real status messages.
+#define EYES_FRAME_MS 120
 #define EYES_COLOR 0xFFFF
 #define EYES_BG    0x0000
 
@@ -135,9 +142,10 @@ static void status_task(void *arg) {
     (void)arg;
     status_msg_t m;
     bool idle_eyes_active = false;
-    // Allocated lazily from PSRAM on first use (up to 240x240x2 = 115200B —
-    // too big for this task's 8192B stack or default internal-RAM .bss).
-    // Boards without a pixel panel (display_width()==0) never allocate it.
+    // Allocated lazily from PSRAM on first use. Sized to the eyes' dirty
+    // band (not the full panel — see robot_eyes_dirty_band) since that's
+    // the only region ever redrawn. Boards without a pixel panel
+    // (display_width()==0) never allocate it.
     static uint16_t *s_eyes_buf = NULL;
 
     for (;;) {
@@ -158,20 +166,37 @@ static void status_task(void *arg) {
         }
         if (idle_eyes_active) {
             int w = display_width(), h = display_height();
+            int band_y, band_h;
+            robot_eyes_dirty_band(h, &band_y, &band_h);
             if (!s_eyes_buf) {
-                s_eyes_buf = heap_caps_malloc((size_t)w * h * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+                s_eyes_buf = heap_caps_malloc((size_t)w * band_h * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
                 if (!s_eyes_buf) {
+                    // Fall back to whatever text this message actually carried
+                    // (e.g. the real "Ready"/"Idle" wording), not a hardcoded
+                    // guess — the board still has a working text path.
                     ESP_LOGE(TAG, "robot_eyes: PSRAM alloc failed, falling back to text");
                     idle_eyes_active = false;
-                    display_show("Idle", "Press wake to talk");
+                    display_show(m.line1, m.has_line2 ? m.line2 : NULL);
                     continue;
                 }
             }
             uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
-            robot_eyes_render(s_eyes_buf, w, h, now_ms, EYES_COLOR, EYES_BG);
-            display_flush(0, 0, w, h, s_eyes_buf);
+            robot_eyes_render(s_eyes_buf, w, band_h, h, band_y, now_ms, EYES_COLOR, EYES_BG);
+            display_flush(0, band_y, w, band_h, s_eyes_buf);
         }
     }
+}
+
+// Common "go idle" transition: same status text + show_idle_eyes everywhere,
+// so no call site can forget to set the flag (a prior version of this file
+// had 4 near-identical copies of this, and one — the volume-button handler
+// — omitted it, silently killing the idle animation the moment volume was
+// adjusted while idle).
+static void send_idle_status(const char *line1) {
+    status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true };
+    strncpy(m.line1, line1, sizeof(m.line1) - 1);
+    strncpy(m.line2, "Press wake to talk", sizeof(m.line2) - 1);
+    xQueueSend(s_status_q, &m, 0);
 }
 
 // Runs in the button task context — only flips flags, adjusts the volume int,
@@ -203,17 +228,25 @@ static void on_button(button_id_t id) {
         s_active = !s_active;
         ws_client_set_reconnect(s_active);
         s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
-        status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = !s_active };
-        strncpy(m.line1, s_active ? "Listening" : "Idle", sizeof(m.line1) - 1);
-        strncpy(m.line2, s_active ? "Speak now" : "Press wake to talk",
-                sizeof(m.line2) - 1);
-        xQueueSend(s_status_q, &m, 0);
+        if (s_active) {
+            status_msg_t m = { .play_voice = false, .has_line2 = true };
+            strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
+            strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
+            xQueueSend(s_status_q, &m, 0);
+        } else {
+            send_idle_status("Idle");
+        }
         break;
     }
     case BTN_VOL_UP:
     case BTN_VOL_DOWN: {
         int v = audio_adjust_volume(id == BTN_VOL_UP ? 10 : -10);
-        status_msg_t m = { .play_voice = false, .has_line2 = false };
+        // show_idle_eyes = !s_active: if the device is idle, keep the eyes
+        // animation running instead of showing this line (matches every
+        // other idle-preserving path) — without this, adjusting volume
+        // while idle used to permanently replace the animation with a
+        // static "Volume NN%" line that nothing ever cleared.
+        status_msg_t m = { .play_voice = false, .has_line2 = false, .show_idle_eyes = !s_active };
         snprintf(m.line1, sizeof(m.line1), "Volume %d%%", v);
         xQueueSend(s_status_q, &m, 0);
         break;
@@ -283,10 +316,7 @@ static void on_event(const lugo_event_t *ev) {
         { pkt_t *p; while (xQueueReceive(s_pktq, &p, 0) == pdTRUE) free(p); }  // flush
         audio_spk_reset();
         opus_codec_reset();
-        status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true };
-        strncpy(m.line1, "Idle", sizeof(m.line1) - 1);
-        strncpy(m.line2, "Press wake to talk", sizeof(m.line2) - 1);
-        xQueueSend(s_status_q, &m, 0);
+        send_idle_status("Idle");
         break;
     }
     case LUGO_EV_ERROR: {
@@ -426,10 +456,7 @@ static void idle_watchdog_task(void *arg) {
         if (idle_s >= (uint32_t)(to + 5)) {
             s_active = false;
             ws_client_set_reconnect(false);   // sleep the link too
-            status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true };
-            strncpy(m.line1, "Idle", sizeof(m.line1) - 1);
-            strncpy(m.line2, "Press wake to talk", sizeof(m.line2) - 1);
-            xQueueSend(s_status_q, &m, 0);
+            send_idle_status("Idle");
         }
     }
 }
@@ -495,9 +522,6 @@ void app_main(void) {
     // a direct display_show call) so it's status_task — not app_main — that
     // touches the panel, same isolation rule as every other idle transition;
     // status_task is already running by this point.
-    status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true };
-    strncpy(m.line1, "Ready", sizeof(m.line1) - 1);
-    strncpy(m.line2, "Press wake to talk", sizeof(m.line2) - 1);
-    xQueueSend(s_status_q, &m, 0);
+    send_idle_status("Ready");
     ESP_LOGI(TAG, "running (asleep — press wake to connect)");
 }

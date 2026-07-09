@@ -30,8 +30,11 @@ typedef struct {
     void (*show)(const char *line1, const char *line2);
     // Blits an RGB565 buffer at (x,y), size w*h, straight to the panel — the
     // pixel-level counterpart to show(), used for images/animation instead
-    // of the 2-line text path. NULL on boards with no pixel-addressable
-    // panel (must be checked before calling, same as the battery op pattern).
+    // of the 2-line text path. flush/width/height are set as a group (every
+    // board_def.c today sets all three or none) — width==0 is the actual
+    // "no pixel panel" signal callers check (see main.c's status_task); a
+    // board that set one without the other would violate that invariant,
+    // since no caller in this codebase NULL-checks flush directly.
     void (*flush)(int x, int y, int w, int h, const uint16_t *rgb565);
     int width;   // panel dimensions in pixels; 0 if flush is NULL
     int height;
