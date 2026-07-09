@@ -1,6 +1,7 @@
 #pragma once
 #include "esp_err.h"
 #include <stdint.h>
+#include <stdbool.h>
 
 // Brings up the SPI bus + ST7789 panel (SCLK=42, MOSI=41, DC=1, RST=2,
 // no CS/MISO, 240x240, no offset) and turns the backlight (GPIO17) on.
@@ -23,3 +24,6 @@ void display_flush(int x, int y, int w, int h, const uint16_t *rgb565);
 // Panel dimensions in pixels, from the active board's display_ops.
 int display_width(void);
 int display_height(void);
+
+// Turn the panel backlight on/off (GPIO, no PWM — see st7789 driver comment).
+void display_set_backlight(bool on);

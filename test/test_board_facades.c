@@ -38,8 +38,11 @@ static void d_show(const char *l1, const char *l2) { (void)l2; d_show_calls++; d
 static void d_flush(int x, int y, int w, int h, const uint16_t *buf) {
     d_flush_calls++; d_last_x=x; d_last_y=y; d_last_w=w; d_last_h=h; d_last_buf=buf;
 }
+static bool s_backlight_on = false;
+static void mock_display_set_backlight(bool on) { s_backlight_on = on; }
 static const display_ops_t MOCK_DISPLAY = {
     .init=d_init, .show=d_show, .flush=d_flush, .width=64, .height=32,
+    .set_backlight=mock_display_set_backlight,
 };
 
 // ---- mock buttons driver ----
@@ -90,11 +93,21 @@ static void test_buttons_facade_dispatches(void) {
     CHECK(b_start_calls == 1);
 }
 
+static void test_display_set_backlight_calls_through(void) {
+    board_set(&MOCK_BOARD);
+    display_init();
+    display_set_backlight(true);
+    CHECK(s_backlight_on == true);
+    display_set_backlight(false);
+    CHECK(s_backlight_on == false);
+}
+
 int main(void) {
     test_audio_facade_dispatches();
     test_display_facade_dispatches();
     test_display_facade_dispatches_flush_and_dims();
     test_buttons_facade_dispatches();
+    test_display_set_backlight_calls_through();
     printf(failures ? "FAILED (%d)\n" : "OK\n", failures);
     return failures ? 1 : 0;
 }

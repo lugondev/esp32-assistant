@@ -1,0 +1,17 @@
+# Keeps the auto-registration "mcp_tool" section (see LUGO_MCP_TOOL in
+# mcp_tools.h) under --gc-sections and brackets it with boundary symbols
+# registry.c counts from. Mirrors components/boards/linker.lf exactly.
+
+[sections:mcp_tool]
+entries:
+    mcp_tool+
+
+[scheme:mcp_tool_scheme]
+entries:
+    mcp_tool -> flash_rodata
+
+[mapping:mcp_tool_mapping]
+archive: *
+entries:
+    * (mcp_tool_scheme);
+        mcp_tool -> flash_rodata KEEP() SURROUND(mcp_tool)

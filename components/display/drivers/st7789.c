@@ -19,6 +19,10 @@ static const char *TAG = "display";
 
 static esp_lcd_panel_handle_t s_panel;
 
+// Backlight GPIO, cached at init time so st7789_set_backlight (which is
+// cfg-less by the display_ops_t signature) can re-drive it later.
+int g_st7789_bl_pin;
+
 // Fewer, larger SPI transactions are more reliable than many tiny ones on
 // jumper-wire wiring (each transaction re-sends the row-address-set command;
 // a single corrupted one misdirects that chunk's data, showing up as a
@@ -66,6 +70,7 @@ static esp_err_t st7789_init(const void *cfg_v) {
     };
     ESP_ERROR_CHECK(gpio_config(&bl_cfg));
     gpio_set_level(c->bl, 1);
+    g_st7789_bl_pin = c->bl;
 
     spi_bus_config_t buscfg = {
         .mosi_io_num = c->mosi,
@@ -136,10 +141,17 @@ static void st7789_flush(int x, int y, int w, int h, const uint16_t *rgb565) {
     esp_lcd_panel_draw_bitmap(s_panel, x, y, x + w, y + h, rgb565);
 }
 
+// GPIO on/off only (no PWM dimming). Re-drives the pin captured at init time
+// since display_ops_t functions are cfg-less by signature.
+static void st7789_set_backlight(bool on) {
+    gpio_set_level(g_st7789_bl_pin, on ? 1 : 0);
+}
+
 const display_ops_t display_st7789_ops = {
     .init = st7789_init,
     .show = st7789_show,
     .flush = st7789_flush,
     .width = DISP_WIDTH,
     .height = DISP_HEIGHT,
+    .set_backlight = st7789_set_backlight,
 };

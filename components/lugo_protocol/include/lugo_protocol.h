@@ -28,11 +28,32 @@ typedef struct {
     char text[256];       // stt/sentence text, error message, or goodbye reason
     int  sample_rate;     // welcome: audio_params.sample_rate
     int  idle_timeout_s;  // welcome
+    // For LUGO_EV_MCP: points at the "payload" object's '{' inside the caller's
+    // own JSON buffer (borrowed, not copied — same convention as
+    // lugo_frame_decode's payload pointer). NULL for all other event types.
+    const char *mcp_payload;
 } lugo_event_t;
 
 // Parse a Lugo text frame. Returns 0 on success (type=UNKNOWN for unrecognized),
 // -1 if the payload isn't a JSON object.
 int lugo_parse_event(const char *json, lugo_event_t *out);
+
+// Find the value for top-level "key" in a flat (non-nested-search) scan;
+// returns a pointer to the first character of the value, or NULL. Works for
+// any JSON value type (object, string, number, bool) — callers combine this
+// with lugo_json_get_* or their own object-scoped calls.
+const char *lugo_json_find(const char *json, const char *key);
+
+// Copy the string value for key into out (cap-bounded, common escapes
+// unescaped). out is "" if the key is absent or not a string.
+void lugo_json_get_string(const char *json, const char *key, char *out, size_t cap);
+
+// Read the integer value for key; 0 if absent/non-numeric.
+int lugo_json_get_int(const char *json, const char *key);
+
+// Read the boolean value for key ("true"/"false" literal at the value
+// position); default_val if the key is absent.
+int lugo_json_get_bool(const char *json, const char *key, int default_val);
 
 // Builders. Return bytes written (excluding NUL), or -1 on overflow.
 int lugo_build_wakeup(char *buf, int buflen, const char *profile,
