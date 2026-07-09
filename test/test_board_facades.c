@@ -1,6 +1,8 @@
 #include "board.h"
 #include "audio.h"
+#include "display.h"
 #include <stdio.h>
+#include <string.h>
 
 static int failures = 0;
 #define CHECK(cond) do { if (!(cond)) { \
@@ -20,7 +22,14 @@ static const audio_ops_t MOCK_AUDIO = {
     .init=m_init, .mic_read=m_mic, .spk_write=m_spk, .spk_reset=m_reset,
     .set_volume=m_setv, .get_volume=m_getv, .adjust_volume=m_adjv,
 };
-static const board_t MOCK_BOARD = { .name="mock", .audio=&MOCK_AUDIO };
+// ---- mock display driver ----
+static int d_init_calls, d_show_calls;
+static const char *d_last1;
+static esp_err_t d_init(const void *cfg) { (void)cfg; d_init_calls++; return ESP_OK; }
+static void d_show(const char *l1, const char *l2) { (void)l2; d_show_calls++; d_last1 = l1; }
+static const display_ops_t MOCK_DISPLAY = { .init=d_init, .show=d_show };
+
+static const board_t MOCK_BOARD = { .name="mock", .audio=&MOCK_AUDIO, .display=&MOCK_DISPLAY };
 
 static void test_audio_facade_dispatches(void) {
     board_set(&MOCK_BOARD);
@@ -34,8 +43,18 @@ static void test_audio_facade_dispatches(void) {
     CHECK(audio_adjust_volume(-10) == 32);
 }
 
+static void test_display_facade_dispatches(void) {
+    board_set(&MOCK_BOARD);
+    CHECK(display_init() == ESP_OK);
+    CHECK(d_init_calls == 1);
+    display_show("hello", NULL);
+    CHECK(d_show_calls == 1);
+    CHECK(d_last1 != NULL && strcmp(d_last1, "hello") == 0);
+}
+
 int main(void) {
     test_audio_facade_dispatches();
+    test_display_facade_dispatches();
     printf(failures ? "FAILED (%d)\n" : "OK\n", failures);
     return failures ? 1 : 0;
 }
