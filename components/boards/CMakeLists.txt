@@ -6,7 +6,7 @@
 file(GLOB BOARD_SRCS "${CMAKE_CURRENT_SOURCE_DIR}/*/board_def.c")
 idf_component_register(
     SRCS ${BOARD_SRCS}
-    REQUIRES board audio display buttons
+    REQUIRES board audio display buttons battery
     LDFRAGMENTS "linker.lf"
     WHOLE_ARCHIVE)
 

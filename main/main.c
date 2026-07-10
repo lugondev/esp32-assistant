@@ -4,6 +4,7 @@
 #include "display.h"
 #include "robot_eyes.h"
 #include "statusbar.h"
+#include "battery.h"
 #include "gfx.h"
 #include "voice.h"
 #include "buttons.h"
@@ -213,10 +214,14 @@ static void status_task(void *arg) {
                     int rssi = 0;
                     bool connected = wifi_sta_get_rssi(&rssi);
                     int bars = statusbar_wifi_bars(connected, rssi);
-                    // battery_pct = -1: this board has no battery sensor
-                    // (devkit, USB-powered) — omit the icon rather than
-                    // show a fabricated reading.
-                    statusbar_render(s_bar_buf, w, STATUS_BAR_H, bars, m.line1, -1, HUD_FG, HUD_BG);
+                    // battery_read_pct()/battery_charge_state() are NULL-safe:
+                    // a board with no battery hardware wired (board_t.battery
+                    // == NULL) gets -1/BATTERY_NOT_CHARGING automatically, so
+                    // this line doesn't need a per-board #ifdef.
+                    int batt_pct = battery_read_pct();
+                    bool charging = battery_charge_state() == BATTERY_CHARGING;
+                    statusbar_render(s_bar_buf, w, STATUS_BAR_H, bars, m.line1,
+                                      batt_pct, charging, HUD_FG, HUD_BG);
                     display_flush(0, 0, w, STATUS_BAR_H, s_bar_buf);
                 }
             }
@@ -620,6 +625,7 @@ void app_main(void) {
     ESP_ERROR_CHECK(audio_init());  // moved earlier: voice_play() needs the codec
                                      // ready before the first status announcement,
                                      // and audio_init() has no WiFi dependency.
+    ESP_ERROR_CHECK(battery_init());  // no-op if this board has no battery hardware
 
     esp_err_t nvs_err = nvs_flash_init();
     if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {

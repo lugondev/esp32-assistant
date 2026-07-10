@@ -2,6 +2,7 @@
 #include "audio.h"
 #include "display.h"
 #include "buttons.h"
+#include "battery.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -50,8 +51,23 @@ static int b_start_calls;
 static void b_start(void (*cb)(button_id_t)) { (void)cb; b_start_calls++; }
 static const buttons_ops_t MOCK_BUTTONS = { .start = b_start };
 
+// ---- mock battery driver ----
+static int bat_init_calls;
+static esp_err_t bat_init(const void *cfg) { (void)cfg; bat_init_calls++; return ESP_OK; }
+static int bat_read_pct(void) { return 42; }
+static battery_charge_state_t bat_charge_state(void) { return BATTERY_CHARGING; }
+static const battery_ops_t MOCK_BATTERY = {
+    .init = bat_init, .read_pct = bat_read_pct, .charge_state = bat_charge_state,
+};
+
 static const board_t MOCK_BOARD = { .name="mock", .mic=&MOCK_MIC, .speaker=&MOCK_SPEAKER,
                                     .display=&MOCK_DISPLAY, .buttons=&MOCK_BUTTONS };
+// No .battery set (NULL) — a board with no battery hardware, same as
+// lugo-s3-st7789 today. Deliberately separate from MOCK_BOARD so tests can
+// exercise both the dispatch path and the "no hardware" default together.
+static const board_t MOCK_BOARD_WITH_BATTERY = { .name="mock-batt", .mic=&MOCK_MIC,
+    .speaker=&MOCK_SPEAKER, .display=&MOCK_DISPLAY, .buttons=&MOCK_BUTTONS,
+    .battery=&MOCK_BATTERY };
 
 static void test_audio_facade_dispatches(void) {
     board_set(&MOCK_BOARD);
@@ -102,12 +118,29 @@ static void test_display_set_backlight_calls_through(void) {
     CHECK(s_backlight_on == false);
 }
 
+static void test_battery_facade_defaults_when_board_has_none(void) {
+    board_set(&MOCK_BOARD);   // .battery is NULL
+    CHECK(battery_init() == ESP_OK);
+    CHECK(battery_read_pct() == -1);
+    CHECK(battery_charge_state() == BATTERY_NOT_CHARGING);
+}
+
+static void test_battery_facade_dispatches_when_present(void) {
+    board_set(&MOCK_BOARD_WITH_BATTERY);
+    CHECK(battery_init() == ESP_OK);
+    CHECK(bat_init_calls == 1);
+    CHECK(battery_read_pct() == 42);
+    CHECK(battery_charge_state() == BATTERY_CHARGING);
+}
+
 int main(void) {
     test_audio_facade_dispatches();
     test_display_facade_dispatches();
     test_display_facade_dispatches_flush_and_dims();
     test_buttons_facade_dispatches();
     test_display_set_backlight_calls_through();
+    test_battery_facade_defaults_when_board_has_none();
+    test_battery_facade_dispatches_when_present();
     printf(failures ? "FAILED (%d)\n" : "OK\n", failures);
     return failures ? 1 : 0;
 }

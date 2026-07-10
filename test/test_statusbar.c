@@ -39,11 +39,11 @@ static void test_render_draws_more_wifi_bars_for_more_signal(void) {
     int third_bar_bottom_y = H - 3;   // 1px above the bottom margin
 
     clear();
-    statusbar_render(buf, W, H, /*wifi_bars=*/4, "", -1, FG, BG);
+    statusbar_render(buf, W, H, /*wifi_bars=*/4, "", -1, false, FG, BG);
     CHECK(px(third_bar_x, third_bar_bottom_y) == FG);
 
     clear();
-    statusbar_render(buf, W, H, /*wifi_bars=*/1, "", -1, FG, BG);
+    statusbar_render(buf, W, H, /*wifi_bars=*/1, "", -1, false, FG, BG);
     CHECK(px(third_bar_x, third_bar_bottom_y) == BG);
 }
 
@@ -53,7 +53,7 @@ static void test_render_draws_centered_text(void) {
     // somewhere in the buffer (not asserting exact x — just that centering
     // + font lookup produced real, non-background pixels for a non-space char).
     clear();
-    statusbar_render(buf, W, H, 0, "A", -1, FG, BG);
+    statusbar_render(buf, W, H, 0, "A", -1, false, FG, BG);
     bool any_fg = false;
     for (int i = 0; i < W * H; i++) if (buf[i] == FG) any_fg = true;
     CHECK(any_fg);
@@ -61,13 +61,29 @@ static void test_render_draws_centered_text(void) {
 
 static void test_render_omits_battery_when_negative(void) {
     clear();
-    statusbar_render(buf, W, H, 0, "", -1, FG, BG);
+    statusbar_render(buf, W, H, 0, "", -1, false, FG, BG);
     for (int i = 0; i < W * H; i++) CHECK(buf[i] == BG);
 }
 
 static void test_render_draws_battery_when_nonnegative(void) {
     clear();
-    statusbar_render(buf, W, H, 0, "", 100, FG, BG);
+    statusbar_render(buf, W, H, 0, "", 100, false, FG, BG);
+    bool any_fg = false;
+    for (int i = 0; i < W * H; i++) if (buf[i] == FG) any_fg = true;
+    CHECK(any_fg);
+}
+
+static void test_render_omits_charging_bolt_when_not_charging(void) {
+    clear();
+    statusbar_render(buf, W, H, 0, "", -1, false, FG, BG);
+    for (int i = 0; i < W * H; i++) CHECK(buf[i] == BG);
+}
+
+static void test_render_draws_charging_bolt_when_charging(void) {
+    // No battery icon (-1) so any fg pixel at all must come from the bolt —
+    // isolates the charging indicator from the battery-icon rendering path.
+    clear();
+    statusbar_render(buf, W, H, 0, "", -1, true, FG, BG);
     bool any_fg = false;
     for (int i = 0; i < W * H; i++) if (buf[i] == FG) any_fg = true;
     CHECK(any_fg);
@@ -80,6 +96,8 @@ int main(void) {
     test_render_draws_centered_text();
     test_render_omits_battery_when_negative();
     test_render_draws_battery_when_nonnegative();
+    test_render_omits_charging_bolt_when_not_charging();
+    test_render_draws_charging_bolt_when_charging();
     if (failures) { printf("%d FAILURES\n", failures); return 1; }
     printf("ALL PASS\n");
     return 0;

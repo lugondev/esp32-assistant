@@ -15,6 +15,9 @@ int statusbar_wifi_bars(bool connected, int rssi_dbm);
 // same rule as display_layout_line), and a battery icon at the right.
 // battery_pct: 0-100 fills the icon proportionally; pass a negative value to
 // omit the battery icon entirely (e.g. a board with no battery sensor).
+// charging: draws a small bolt to the left of the battery icon's position
+// (independent of battery_pct, since a board may know charge state from
+// TP4056's CHRG/STDBY pins without having a voltage-divider reading).
 void statusbar_render(uint16_t *buf, int buf_w, int buf_h,
                        int wifi_bars, const char *text, int battery_pct,
-                       uint16_t fg, uint16_t bg);
+                       bool charging, uint16_t fg, uint16_t bg);

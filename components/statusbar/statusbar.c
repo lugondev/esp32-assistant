@@ -33,7 +33,7 @@ static void draw_text(uint16_t *buf, int buf_w, int buf_h,
 
 void statusbar_render(uint16_t *buf, int buf_w, int buf_h,
                        int wifi_bars, const char *text, int battery_pct,
-                       uint16_t fg, uint16_t bg) {
+                       bool charging, uint16_t fg, uint16_t bg) {
     gfx_fill_rect(buf, buf_w, buf_h, 0, 0, buf_w, buf_h, bg);
 
     // WiFi bars: 4 columns of increasing height, bottom-aligned, left margin.
@@ -55,19 +55,33 @@ void statusbar_render(uint16_t *buf, int buf_w, int buf_h,
         draw_text(buf, buf_w, buf_h, tx, ty, text, fg);
     }
 
+    // Battery icon geometry is computed unconditionally (not just when
+    // battery_pct >= 0) so the charging bolt below has a stable anchor even
+    // on a board that knows charge state (TP4056 CHRG/STDBY pins) but has no
+    // voltage-divider reading yet.
+    int body_w = 18, body_h = 9, nub_w = 2, nub_h = 4;
+    int bx = buf_w - body_w - nub_w - 4;
+    int by = (buf_h - body_h) / 2;
+
     // Battery: outline (via nested rounded rects — no separate stroke
     // primitive exists) + a nub, filled proportionally to battery_pct.
     // Negative battery_pct means no battery sensor on this board — omit
     // the icon entirely rather than show a meaningless fixed value.
     if (battery_pct >= 0) {
         int pct = battery_pct > 100 ? 100 : battery_pct;
-        int body_w = 18, body_h = 9, nub_w = 2, nub_h = 4;
-        int bx = buf_w - body_w - nub_w - 4;
-        int by = (buf_h - body_h) / 2;
         gfx_fill_rounded_rect(buf, buf_w, buf_h, bx, by, body_w, body_h, 2, fg);
         gfx_fill_rounded_rect(buf, buf_w, buf_h, bx + 1, by + 1, body_w - 2, body_h - 2, 1, bg);
         int fill_w = ((body_w - 4) * pct) / 100;
         if (fill_w > 0) gfx_fill_rect(buf, buf_w, buf_h, bx + 2, by + 2, fill_w, body_h - 4, fg);
         gfx_fill_rect(buf, buf_w, buf_h, bx + body_w, by + (body_h - nub_h) / 2, nub_w, nub_h, fg);
+    }
+
+    // Charging bolt: a small right-pointing triangle just left of the
+    // battery icon's position. Independent of battery_pct on purpose.
+    if (charging) {
+        int blt_x = bx - 8;
+        gfx_fill_triangle(buf, buf_w, buf_h,
+                           blt_x, by, blt_x, by + body_h, blt_x + 5, by + body_h / 2,
+                           fg);
     }
 }

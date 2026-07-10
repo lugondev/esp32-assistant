@@ -3,6 +3,7 @@
 #include "i2s_speaker.h"
 #include "display_st7789.h"
 #include "buttons_gpio.h"
+#include "tp4056_battery.h"
 #include "sdkconfig.h"
 
 #if CONFIG_IDF_TARGET_ESP32S3
@@ -20,6 +21,18 @@ static const display_st7789_cfg_t display_cfg = {
 static const buttons_gpio_cfg_t buttons_cfg = {
     .wake = 47, .vol_up = 40, .vol_down = 39,
 };
+
+// TP4056 not wired on this board yet — fill in gpio_chrg/gpio_stdby once
+// soldered (charging status alone, no ADC needed) and adc_channel/r1_ohms/
+// r2_ohms later for a real percentage (see tp4056_battery.h). Then add
+// `.battery = &tp4056_battery_ops, .battery_cfg = &battery_cfg,` to the
+// LUGO_BOARD_REGISTER block below — nothing else needs to change, since
+// main.c/statusbar already read through the battery facade unconditionally.
+// static const tp4056_battery_cfg_t battery_cfg = {
+//     .gpio_chrg = -1, .gpio_stdby = -1,
+//     .adc_channel = -1, .adc_unit = ADC_UNIT_1, .adc_atten = ADC_ATTEN_DB_12,
+//     .r1_ohms = 100000, .r2_ohms = 100000,
+// };
 
 static bool match(void) { return true; }   // Kconfig-forced; single S3 board
 

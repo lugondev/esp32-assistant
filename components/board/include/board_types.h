@@ -46,16 +46,34 @@ typedef struct {
     void (*start)(void (*on_press)(button_id_t id));
 } buttons_ops_t;
 
+// TP4056's CHRG/STDBY are mutually exclusive per its datasheet, so this is a
+// tri-state rather than two independent booleans — NOT_CHARGING also covers
+// "no battery hardware on this board" (the default when board_t.battery is
+// NULL; see components/battery's facade).
+typedef enum {
+    BATTERY_NOT_CHARGING,
+    BATTERY_CHARGING,
+    BATTERY_FULL,
+} battery_charge_state_t;
+
+typedef struct {
+    esp_err_t (*init)(const void *cfg);
+    int (*read_pct)(void);   // 0-100, or -1 if a reading isn't available yet
+    battery_charge_state_t (*charge_state)(void);
+} battery_ops_t;
+
 typedef struct board {
     const char          *name;
     const mic_ops_t     *mic;
     const speaker_ops_t *speaker;
     const display_ops_t *display;
     const buttons_ops_t *buttons;
+    const battery_ops_t *battery;   // NULL if this board has no battery sensor
     // const void *net;         // RESERVED for a future 4G/other-transport board
     const void          *mic_cfg;
     const void          *speaker_cfg;
     const void          *display_cfg;
     const void          *buttons_cfg;
+    const void          *battery_cfg;
     bool               (*match)(void); // true if firmware is running on this board
 } board_t;
