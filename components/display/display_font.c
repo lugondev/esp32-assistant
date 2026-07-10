@@ -114,3 +114,23 @@ int display_layout_line(const char *text, int screen_width) {
     if (text_width > screen_width) return -1;
     return (screen_width - text_width) / 2;
 }
+
+void display_font_downscale(const uint8_t src[8], int dst_w, int dst_h, uint8_t *dst) {
+    for (int oy = 0; oy < dst_h; oy++) {
+        int sy0 = oy * 8 / dst_h;
+        int sy1 = (oy + 1) * 8 / dst_h;
+        if (sy1 <= sy0) sy1 = sy0 + 1;
+        uint8_t row = 0;
+        for (int ox = 0; ox < dst_w; ox++) {
+            int sx0 = ox * 8 / dst_w;
+            int sx1 = (ox + 1) * 8 / dst_w;
+            if (sx1 <= sx0) sx1 = sx0 + 1;
+            for (int sy = sy0; sy < sy1 && sy < 8; sy++) {
+                for (int sx = sx0; sx < sx1 && sx < 8; sx++) {
+                    if ((src[sy] >> sx) & 1) row |= (uint8_t)(1u << ox);
+                }
+            }
+        }
+        dst[oy] = row;
+    }
+}

@@ -50,6 +50,10 @@ config AA_BOARD_LUGO_S3_ST7789
     bool "Lugo S3 (ST7789 + MAX98357A/INMP441 dual-I2S)"
     depends on IDF_TARGET_ESP32S3
 
+config AA_BOARD_LUGO_S3_SSD1306
+    bool "Lugo S3 (SSD1306 0.96in SPI + MAX98357A/INMP441 dual-I2S)"
+    depends on IDF_TARGET_ESP32S3
+
 config AA_BOARD_LUGO_C3_DEVKIT
     bool "Lugo C3 devkit (full-duplex I2S) [pins are placeholders]"
     depends on IDF_TARGET_ESP32C3
@@ -65,6 +69,7 @@ config AA_BOARD_FORCE
 config AA_BOARD_NAME
     string
     default "lugo-s3-st7789" if AA_BOARD_LUGO_S3_ST7789
+    default "lugo-s3-ssd1306" if AA_BOARD_LUGO_S3_SSD1306
     default "lugo-c3-devkit" if AA_BOARD_LUGO_C3_DEVKIT
     default ""
 

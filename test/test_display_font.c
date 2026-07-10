@@ -1,6 +1,7 @@
 #include "display_font.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 static int failures = 0;
 #define CHECK(cond) do { if (!(cond)) { \
@@ -54,6 +55,40 @@ static void test_layout_too_wide(void) {
     CHECK(display_layout_line("1234567890123456789012345678901", 240) == -1);
 }
 
+static void test_downscale_fully_lit_glyph_stays_fully_lit(void) {
+    static const uint8_t full[8] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+    uint8_t out[7];
+    display_font_downscale(full, 5, 7, out);
+    for (int i = 0; i < 7; i++) CHECK(out[i] == 0x1F);  // 5 lit bits
+}
+
+static void test_downscale_blank_glyph_stays_blank(void) {
+    static const uint8_t blank[8] = {0};
+    uint8_t out[7];
+    display_font_downscale(blank, 5, 7, out);
+    for (int i = 0; i < 7; i++) CHECK(out[i] == 0x00);
+}
+
+static void test_downscale_preserves_a_single_top_left_pixel(void) {
+    // Only the top-left source pixel lit -> should still land in the
+    // top-left region of the downscaled output (output row 0, some bit
+    // among the leftmost columns), not vanish entirely.
+    static const uint8_t corner[8] = {0x01,0,0,0,0,0,0,0};
+    uint8_t out[7];
+    display_font_downscale(corner, 5, 7, out);
+    bool any_lit = false;
+    for (int i = 0; i < 7; i++) if (out[i]) any_lit = true;
+    CHECK(any_lit);
+    CHECK((out[0] & 0x01) != 0);  // maps to output row 0, leftmost column
+}
+
+static void test_downscale_output_width_never_exceeds_requested(void) {
+    static const uint8_t full[8] = {0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
+    uint8_t out[7];
+    display_font_downscale(full, 5, 7, out);
+    for (int i = 0; i < 7; i++) CHECK((out[i] & ~0x1F) == 0);  // no stray bits >= bit 5
+}
+
 int main(void) {
     test_glyph_space();
     test_glyph_known_letter();
@@ -64,6 +99,10 @@ int main(void) {
     test_layout_centers_empty_string();
     test_layout_exact_fit();
     test_layout_too_wide();
+    test_downscale_fully_lit_glyph_stays_fully_lit();
+    test_downscale_blank_glyph_stays_blank();
+    test_downscale_preserves_a_single_top_left_pixel();
+    test_downscale_output_width_never_exceeds_requested();
     if (failures) { printf("%d FAILURES\n", failures); return 1; }
     printf("ALL PASS\n");
     return 0;

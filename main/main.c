@@ -153,7 +153,19 @@ static QueueHandle_t s_status_q;
 #define EYES_BG    HUD_BG
 
 // Status bar strip height in pixels (WiFi bars + centered text + battery).
-#define STATUS_BAR_H 24
+// A fixed 24px (already tuned against the 240x216 ST7789) eats over a third
+// of a 128x64 OLED, squeezing the eyes/decor band underneath to almost
+// nothing — scale down on short panels instead. 12 is the tightest that
+// still fits every element without clipping: the 8px font glyph, the
+// 8px-tall full wifi bar, and the 9px battery icon body all fit with >=1px
+// margin at buf_h=12 (see statusbar_render's centering/margin math) — 6px
+// (tried first) clipped all three, so the room for eyes/decor has to come
+// from robot_eyes' own geometry instead, not from crushing the status bar
+// further. display_height() is fixed for the device's whole lifetime, so
+// this is safe to call repeatedly rather than cache.
+static int status_bar_height(void) {
+    return display_height() <= 64 ? 12 : 24;
+}
 
 static void status_task(void *arg) {
     (void)arg;
@@ -189,8 +201,9 @@ static void status_task(void *arg) {
                 display_show(m.line1, m.has_line2 ? m.line2 : NULL);
             } else {
                 int w = display_width(), h = display_height();
+                int status_bar_h = status_bar_height();
                 if (!s_bar_buf) {
-                    s_bar_buf = heap_caps_malloc((size_t)w * STATUS_BAR_H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+                    s_bar_buf = heap_caps_malloc((size_t)w * status_bar_h * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
                 }
                 if (!s_bar_buf) {
                     ESP_LOGE(TAG, "statusbar: PSRAM alloc failed, falling back to text");
@@ -205,9 +218,9 @@ static void status_task(void *arg) {
                         // neither region redraws (e.g. eyes-band margins).
                         // s_bar_buf is reused as an EYES_BG-filled scratch
                         // band; statusbar_render below overwrites it anyway.
-                        gfx_fill_rect(s_bar_buf, w, STATUS_BAR_H, 0, 0, w, STATUS_BAR_H, EYES_BG);
-                        for (int y = 0; y < h; y += STATUS_BAR_H) {
-                            int band = (y + STATUS_BAR_H > h) ? h - y : STATUS_BAR_H;
+                        gfx_fill_rect(s_bar_buf, w, status_bar_h, 0, 0, w, status_bar_h, EYES_BG);
+                        for (int y = 0; y < h; y += status_bar_h) {
+                            int band = (y + status_bar_h > h) ? h - y : status_bar_h;
                             display_flush(0, y, w, band, s_bar_buf);
                         }
                     }
@@ -220,9 +233,9 @@ static void status_task(void *arg) {
                     // this line doesn't need a per-board #ifdef.
                     int batt_pct = battery_read_pct();
                     bool charging = battery_charge_state() == BATTERY_CHARGING;
-                    statusbar_render(s_bar_buf, w, STATUS_BAR_H, bars, m.line1,
+                    statusbar_render(s_bar_buf, w, status_bar_h, bars, m.line1,
                                       batt_pct, charging, HUD_FG, HUD_BG);
-                    display_flush(0, 0, w, STATUS_BAR_H, s_bar_buf);
+                    display_flush(0, 0, w, status_bar_h, s_bar_buf);
                 }
             }
             if (m.play_voice) {
@@ -236,7 +249,8 @@ static void status_task(void *arg) {
         }
         if (idle_eyes_active) {
             int w = display_width(), h = display_height();
-            int eyes_h = h - STATUS_BAR_H;
+            int status_bar_h = status_bar_height();
+            int eyes_h = h - status_bar_h;
             int band_y, band_h;
             robot_eyes_dirty_band(eyes_h, &band_y, &band_h);
             if (!s_eyes_buf) {
@@ -251,7 +265,7 @@ static void status_task(void *arg) {
             uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
             robot_eyes_render(s_eyes_buf, w, band_h, eyes_h, band_y, now_ms,
                                m.emotion, EYES_COLOR, EYES_BG);
-            display_flush(0, STATUS_BAR_H + band_y, w, band_h, s_eyes_buf);
+            display_flush(0, status_bar_h + band_y, w, band_h, s_eyes_buf);
 
             // Decorations (mouth/"Zzz"/waves) are a separate,
             // independently-sized band deliberately NOT folded into the
@@ -269,7 +283,7 @@ static void status_task(void *arg) {
                 robot_eyes_decor_band(eyes_h, s_active_decor, &old_y, &old_h);
                 if (s_decor_buf && s_decor_buf_h >= old_h) {
                     gfx_fill_rect(s_decor_buf, w, old_h, 0, 0, w, old_h, EYES_BG);
-                    display_flush(0, STATUS_BAR_H + old_y, w, old_h, s_decor_buf);
+                    display_flush(0, status_bar_h + old_y, w, old_h, s_decor_buf);
                 }
             }
             s_active_decor = decor;
@@ -284,7 +298,7 @@ static void status_task(void *arg) {
                 if (s_decor_buf) {
                     robot_eyes_render_decor(s_decor_buf, w, decor_h, eyes_h, decor_y,
                                              now_ms, decor, EYES_COLOR, EYES_BG);
-                    display_flush(0, STATUS_BAR_H + decor_y, w, decor_h, s_decor_buf);
+                    display_flush(0, status_bar_h + decor_y, w, decor_h, s_decor_buf);
                 }
             }
         }

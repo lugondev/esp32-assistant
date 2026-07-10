@@ -196,10 +196,24 @@ void robot_eyes_decor_band(int panel_h, robot_decor_t decor, int *y, int *height
         *y = cy + (r * ROBOT_MOUTH_TOP_PCT) / 100;
         *height = (r * ROBOT_MOUTH_HEIGHT_PCT) / 100;
         break;
-    case ROBOT_DECOR_ZZZ:
+    case ROBOT_DECOR_ZZZ: {
+        int bottom_edge = cy + (r * ROBOT_ZZZ_BOTTOM_PCT) / 100;
         *height = (r * ROBOT_ZZZ_HEIGHT_PCT) / 100;
-        *y = cy + (r * ROBOT_ZZZ_BOTTOM_PCT) / 100 - *height;
+        // On a small panel (e.g. a 128x64 SSD1306's ~52px eyes band) the
+        // percentage above gives a band shorter than one 'Z' glyph, so
+        // render_zzz's single bottommost glyph loses its top rows instead
+        // of just rendering smaller. Clamp to at least a full glyph.
+        if (*height < DISPLAY_FONT_GLYPH_HEIGHT) {
+            *height = DISPLAY_FONT_GLYPH_HEIGHT;
+            // The percentage-tuned gap above the eye leaves the clamped
+            // glyph sitting right at the panel's top edge with no visual
+            // gap left over the status bar — nudge it down a few px so it
+            // reads as "just above the eye" instead of stuck to the edge.
+            bottom_edge += 4;
+        }
+        *y = bottom_edge - *height;
         break;
+    }
     case ROBOT_DECOR_WAVES:
         *y = cy + (r * ROBOT_WAVES_TOP_PCT) / 100;
         *height = (r * ROBOT_WAVES_HEIGHT_PCT) / 100;
@@ -238,6 +252,13 @@ static void render_mouth(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
 #define ROBOT_ZZZ_STEP_MS 500u
 #define ROBOT_ZZZ_STEPS   4u   // 0,1,2,3 glyphs, then wraps back to 0
 
+// Below this eyes-band height, the full 8x8 'Z' looms disproportionately
+// large relative to the tiny sleepy eye next to it (e.g. a 128x64 SSD1306's
+// ~52px eyes band) — draw a downscaled 5x7 glyph instead.
+#define ROBOT_ZZZ_COMPACT_PANEL_H 100
+#define ROBOT_ZZZ_COMPACT_GLYPH_W 5
+#define ROBOT_ZZZ_COMPACT_GLYPH_H 7
+
 static void render_zzz(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
                         int y_offset, uint32_t now_ms, uint16_t fg, uint16_t bg) {
     gfx_fill_rect(buf, buf_w, buf_rows, 0, 0, buf_w, buf_rows, bg);
@@ -246,16 +267,25 @@ static void render_zzz(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
     (void)band_h;
     int local_bottom = band_top + band_h - y_offset;   // glyphs stack upward from here
 
+    bool compact = panel_h < ROBOT_ZZZ_COMPACT_PANEL_H;
+    int gw = compact ? ROBOT_ZZZ_COMPACT_GLYPH_W : DISPLAY_FONT_GLYPH_WIDTH;
+    int gh = compact ? ROBOT_ZZZ_COMPACT_GLYPH_H : DISPLAY_FONT_GLYPH_HEIGHT;
+
     unsigned visible = (unsigned)((now_ms / ROBOT_ZZZ_STEP_MS) % ROBOT_ZZZ_STEPS);
     int base_x = (buf_w * 3) / 5;
     const uint8_t *glyph = display_font_glyph('Z');
     if (!glyph) return;
+    uint8_t small[8];
+    if (compact) {
+        display_font_downscale(glyph, gw, gh, small);
+        glyph = small;
+    }
     for (unsigned i = 0; i < visible && i < 3; i++) {
-        int gx = base_x + (int)i * (DISPLAY_FONT_GLYPH_WIDTH + 2);
-        int gy = local_bottom - DISPLAY_FONT_GLYPH_HEIGHT - (int)i * (DISPLAY_FONT_GLYPH_HEIGHT - 2);
-        for (int row = 0; row < DISPLAY_FONT_GLYPH_HEIGHT; row++) {
+        int gx = base_x + (int)i * (gw + 2);
+        int gy = local_bottom - gh - (int)i * (gh - 2);
+        for (int row = 0; row < gh; row++) {
             uint8_t bits = glyph[row];
-            for (int col = 0; col < DISPLAY_FONT_GLYPH_WIDTH; col++) {
+            for (int col = 0; col < gw; col++) {
                 if ((bits >> col) & 1) {
                     int px = gx + col, py = gy + row;
                     if (px >= 0 && px < buf_w && py >= 0 && py < buf_rows)

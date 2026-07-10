@@ -17,3 +17,12 @@ const uint8_t *display_font_glyph(char c);
 // width `screen_width` pixels. Returns the offset (>= 0), or -1 if `text`
 // is wider than `screen_width`.
 int display_layout_line(const char *text, int screen_width);
+
+// Downscales one 8x8 glyph bitmap (display_font_glyph's format) to a
+// smaller dst_w x dst_h bitmap, same row-per-byte/bit0=leftmost convention.
+// Box-samples with OR (any source pixel lit in a destination cell lights
+// that cell) rather than majority-vote, so thin single-pixel strokes
+// survive the downscale instead of vanishing — this exists so small panels
+// (e.g. a 128x64 SSD1306) can render legible-ish compact text without a
+// second hand-authored glyph table; dst_w/dst_h must not exceed 8.
+void display_font_downscale(const uint8_t src[8], int dst_w, int dst_h, uint8_t *dst);

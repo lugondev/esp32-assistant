@@ -1,4 +1,5 @@
 #include "robot_eyes.h"
+#include "display_font.h"
 #include <stdio.h>
 
 static int failures = 0;
@@ -241,6 +242,23 @@ static void test_decor_bands_fit_within_the_real_panel(void) {
     CHECK(y + height <= DEVICE_EYES_H);
 }
 
+// A 128x64 SSD1306 with a 12px status bar leaves eyes_h=52 — far smaller
+// than the 240x216 ST7789 the percentages above were tuned against. At this
+// scale the naive percentage math gives ZZZ a band shorter than a single
+// font glyph (confirmed: 6px band vs an 8px-tall 'Z'), so every Z silently
+// loses its top 2 rows instead of just rendering smaller. render_zzz stacks
+// glyphs from the band's bottom upward, so the band must be at least one
+// glyph tall for the first (bottommost, i=0) Z to render uncropped.
+#define SMALL_PANEL_EYES_H 52
+
+static void test_zzz_band_fits_a_full_glyph_on_a_small_panel(void) {
+    int y, height;
+    robot_eyes_decor_band(SMALL_PANEL_EYES_H, ROBOT_DECOR_ZZZ, &y, &height);
+    CHECK(height >= DISPLAY_FONT_GLYPH_HEIGHT);
+    CHECK(y >= 0);
+    CHECK(y + height <= SMALL_PANEL_EYES_H);
+}
+
 static void test_decor_band_zzz_is_above_eye_center(void) {
     int y, height;
     robot_eyes_decor_band(H, ROBOT_DECOR_ZZZ, &y, &height);
@@ -299,6 +317,7 @@ int main(void) {
     test_decor_band_mouth_is_below_eye_center();
     test_decor_band_zzz_is_above_eye_center();
     test_decor_bands_fit_within_the_real_panel();
+    test_zzz_band_fits_a_full_glyph_on_a_small_panel();
     test_decor_band_waves_is_below_eye_center();
     test_render_decor_mouth_paints_something();
     test_render_decor_mouth_animates_open_and_closed();

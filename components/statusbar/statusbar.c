@@ -11,14 +11,36 @@ int statusbar_wifi_bars(bool connected, int rssi_dbm) {
     return 1;
 }
 
+// Below this status-bar height, the full 8x8 font doesn't leave enough
+// margin around itself (see main.c's status_bar_height on a 128x64 SSD1306)
+// — fall back to a downscaled 5x7 glyph instead of just accepting a
+// cramped/edge-to-edge 8px-tall line of text.
+#define COMPACT_THRESHOLD_BUF_H 16
+#define COMPACT_GLYPH_W 5
+#define COMPACT_GLYPH_H 7
+
+static void glyph_size(int buf_h, int *gw, int *gh) {
+    bool compact = buf_h < COMPACT_THRESHOLD_BUF_H;
+    *gw = compact ? COMPACT_GLYPH_W : DISPLAY_FONT_GLYPH_WIDTH;
+    *gh = compact ? COMPACT_GLYPH_H : DISPLAY_FONT_GLYPH_HEIGHT;
+}
+
 static void draw_text(uint16_t *buf, int buf_w, int buf_h,
                        int x, int y, const char *text, uint16_t fg) {
+    int gw, gh;
+    glyph_size(buf_h, &gw, &gh);
+    bool compact = gw != DISPLAY_FONT_GLYPH_WIDTH;
     for (const char *p = text; *p; p++) {
         const uint8_t *glyph = display_font_glyph(*p);
         if (glyph) {
-            for (int row = 0; row < DISPLAY_FONT_GLYPH_HEIGHT; row++) {
+            uint8_t small[8];
+            if (compact) {
+                display_font_downscale(glyph, gw, gh, small);
+                glyph = small;
+            }
+            for (int row = 0; row < gh; row++) {
                 uint8_t bits = glyph[row];
-                for (int col = 0; col < DISPLAY_FONT_GLYPH_WIDTH; col++) {
+                for (int col = 0; col < gw; col++) {
                     if ((bits >> col) & 1) {
                         int px = x + col, py = y + row;
                         if (px >= 0 && px < buf_w && py >= 0 && py < buf_h)
@@ -27,7 +49,7 @@ static void draw_text(uint16_t *buf, int buf_w, int buf_h,
                 }
             }
         }
-        x += DISPLAY_FONT_GLYPH_WIDTH;
+        x += gw;
     }
 }
 
@@ -48,10 +70,12 @@ void statusbar_render(uint16_t *buf, int buf_w, int buf_h,
 
     // Centered text (same centering rule as display_layout_line: skip if
     // wider than the bar rather than wrap/truncate mid-character).
-    int text_w = (int)strlen(text) * DISPLAY_FONT_GLYPH_WIDTH;
+    int gw, gh;
+    glyph_size(buf_h, &gw, &gh);
+    int text_w = (int)strlen(text) * gw;
     if (text_w <= buf_w) {
         int tx = (buf_w - text_w) / 2;
-        int ty = (buf_h - DISPLAY_FONT_GLYPH_HEIGHT) / 2;
+        int ty = (buf_h - gh) / 2;
         draw_text(buf, buf_w, buf_h, tx, ty, text, fg);
     }
 
