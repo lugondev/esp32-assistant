@@ -1,6 +1,14 @@
 # Keeps the auto-registration "mcp_tool" section (see LUGO_MCP_TOOL in
 # mcp_tools.h) under --gc-sections and brackets it with boundary symbols
-# registry.c counts from. Mirrors components/boards/linker.lf exactly.
+# registry.c counts from. Mirrors components/boards/linker.lf exactly —
+# including the ALIGN(4) fix: without it, `_mcp_tool_start` can land a few
+# bytes before the section's actual (4-byte-aligned) pointer data, and
+# registry.c's `_mcp_tool_start[0]` reads a corrupted pointer. This was
+# root-caused via components/boards' identical bug (confirmed by a
+# misaligned `_board_desc_start` in the linker map — see that file's
+# comment for the full story); applying the same fix here preemptively
+# since the pattern is identical, even though this section hasn't been
+# observed crashing yet.
 
 [sections:mcp_tool]
 entries:
@@ -14,4 +22,4 @@ entries:
 archive: *
 entries:
     * (mcp_tool_scheme);
-        mcp_tool -> flash_rodata KEEP() SURROUND(mcp_tool)
+        mcp_tool -> flash_rodata KEEP() ALIGN(4) SURROUND(mcp_tool)

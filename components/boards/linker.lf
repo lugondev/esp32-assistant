@@ -6,7 +6,20 @@
 # after the collected section (consumed as extern arrays in board.c). KEEP()
 # stops the linker from garbage-collecting the entries, which are only
 # referenced via the section, not by name.
-
+#
+# ALIGN(4) before SURROUND is required, not decorative: without it,
+# `_board_desc_start` is emitted at whatever byte offset the location
+# counter happens to be at when this section is placed — which is NOT
+# necessarily 4-byte aligned, while the board_desc section's own contents
+# (an array of board_t* pointers) always get 4-byte-aligned by the linker
+# regardless. Observed in practice: _board_desc_start landed 3 bytes before
+# the actual data (a "*fill* 0x3" gap in the .map), so board.c's
+# `_board_desc_start[0]` read 3 padding bytes + 1 real byte as a "pointer" —
+# garbage, causing board_select() to crash dereferencing it. This had
+# nothing to do with the board registry itself; it silently depended on
+# whatever preceded board_desc in flash_rodata happening to already end on
+# a 4-byte boundary, which broke the day something else in the link (new
+# components changing the cumulative byte count) shifted that offset.
 [sections:board_desc]
 entries:
     board_desc+
@@ -19,4 +32,4 @@ entries:
 archive: *
 entries:
     * (board_desc_scheme);
-        board_desc -> flash_rodata KEEP() SURROUND(board_desc)
+        board_desc -> flash_rodata KEEP() ALIGN(4) SURROUND(board_desc)
