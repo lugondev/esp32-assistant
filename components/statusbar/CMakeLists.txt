@@ -1,4 +1,4 @@
 idf_component_register(
-    SRCS "robot_eyes.c"
+    SRCS "statusbar.c"
     INCLUDE_DIRS "include"
     REQUIRES gfx display)

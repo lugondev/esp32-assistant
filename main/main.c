@@ -3,6 +3,7 @@
 #include "provisioning.h"
 #include "display.h"
 #include "robot_eyes.h"
+#include "statusbar.h"
 #include "gfx.h"
 #include "voice.h"
 #include "buttons.h"
@@ -124,6 +125,10 @@ typedef struct {
     // arrives. Existing designated-initializer literals below don't set this,
     // so they default to false — no other call site needed to change.
     bool show_idle_eyes;
+    // Only meaningful when show_idle_eyes is true. Unset literals default to
+    // ROBOT_EMOTION_NEUTRAL (enum value 0), so only call sites that want a
+    // different expression need to set this explicitly.
+    robot_emotion_t emotion;
 } status_msg_t;
 static QueueHandle_t s_status_q;
 
@@ -137,35 +142,83 @@ static QueueHandle_t s_status_q;
 // actually deliver; only used while idle_eyes_active, so it doesn't affect
 // the queue's normal portMAX_DELAY responsiveness to real status messages.
 #define EYES_FRAME_MS 120
-#define EYES_COLOR 0xFFFF
-#define EYES_BG    0x0000
 
-// How long the confirming text (e.g. "Ready"/"Press wake to talk") stays on
-// screen before the eyes animation takes over. Without this, a show_idle_eyes
-// message went straight to the animation and the text was never visible even
-// for one frame — nothing confirmed WiFi/session state before the device
-// looked "just idle".
-#define IDLE_TEXT_HOLD_MS 1500
+// Shared HUD palette: white foreground on dark navy (not pure black) — one
+// continuous background across the status bar and eyes so there's no
+// visible seam between the two regions.
+#define HUD_FG 0xFFFF
+#define HUD_BG 0x1085
+#define EYES_COLOR HUD_FG
+#define EYES_BG    HUD_BG
+
+// Status bar strip height in pixels (WiFi bars + centered text + battery).
+#define STATUS_BAR_H 24
 
 static void status_task(void *arg) {
     (void)arg;
     status_msg_t m;
     bool idle_eyes_active = false;
-    // Allocated lazily from PSRAM on first use. Sized to the eyes' dirty
-    // band (not the full panel — see robot_eyes_dirty_band) since that's
-    // the only region ever redrawn. Boards without a pixel panel
-    // (display_width()==0) never allocate it.
+    // Allocated lazily from PSRAM on first use. s_eyes_buf is sized to the
+    // eyes' dirty band (not the full panel — see robot_eyes_dirty_band)
+    // since that's the only region redrawn every frame; s_bar_buf covers
+    // the status bar strip and doubles as scratch for the one-time
+    // full-screen clear below. Boards without a pixel panel
+    // (display_width()==0) never allocate either.
     static uint16_t *s_eyes_buf = NULL;
+    static uint16_t *s_bar_buf = NULL;
+    // Decor (mouth/"Zzz") buffer: reallocated only when a taller decor
+    // shows up than whatever it's currently sized for (MOUTH and ZZZ use
+    // different heights — see ROBOT_MOUTH_HEIGHT_PCT/ROBOT_ZZZ_HEIGHT_PCT
+    // in robot_eyes.c), not on every emotion change.
+    static uint16_t *s_decor_buf = NULL;
+    static int s_decor_buf_h = 0;
+    // MOUTH/ZZZ/WAVES each live in a different band (above vs. below the
+    // eyes) — nothing else ever repaints those rows, so switching from one
+    // decor to another (or to none) left the old one visibly stuck on
+    // screen until this was tracked and explicitly cleared below.
+    static robot_decor_t s_active_decor = ROBOT_DECOR_NONE;
 
     for (;;) {
         TickType_t wait = idle_eyes_active ? pdMS_TO_TICKS(EYES_FRAME_MS) : portMAX_DELAY;
         if (xQueueReceive(s_status_q, &m, wait) == pdTRUE) {
-            // Always show the text first — even for a show_idle_eyes message —
-            // so the transition into idle is visible instead of instant.
-            display_show(m.line1, m.has_line2 ? m.line2 : NULL);
+            bool was_idle_eyes = idle_eyes_active;
             idle_eyes_active = m.show_idle_eyes && display_width() > 0 && display_height() > 0;
-            if (idle_eyes_active) {
-                vTaskDelay(pdMS_TO_TICKS(IDLE_TEXT_HOLD_MS));
+
+            if (!idle_eyes_active) {
+                display_show(m.line1, m.has_line2 ? m.line2 : NULL);
+            } else {
+                int w = display_width(), h = display_height();
+                if (!s_bar_buf) {
+                    s_bar_buf = heap_caps_malloc((size_t)w * STATUS_BAR_H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+                }
+                if (!s_bar_buf) {
+                    ESP_LOGE(TAG, "statusbar: PSRAM alloc failed, falling back to text");
+                    idle_eyes_active = false;
+                    display_show(m.line1, m.has_line2 ? m.line2 : NULL);
+                } else {
+                    if (!was_idle_eyes) {
+                        // One-time full-screen clear when entering the HUD
+                        // layout (status bar + eyes) — otherwise leftover
+                        // pixels from the old two-line text screen's
+                        // different layout could show through in whatever
+                        // neither region redraws (e.g. eyes-band margins).
+                        // s_bar_buf is reused as an EYES_BG-filled scratch
+                        // band; statusbar_render below overwrites it anyway.
+                        gfx_fill_rect(s_bar_buf, w, STATUS_BAR_H, 0, 0, w, STATUS_BAR_H, EYES_BG);
+                        for (int y = 0; y < h; y += STATUS_BAR_H) {
+                            int band = (y + STATUS_BAR_H > h) ? h - y : STATUS_BAR_H;
+                            display_flush(0, y, w, band, s_bar_buf);
+                        }
+                    }
+                    int rssi = 0;
+                    bool connected = wifi_sta_get_rssi(&rssi);
+                    int bars = statusbar_wifi_bars(connected, rssi);
+                    // battery_pct = -1: this board has no battery sensor
+                    // (devkit, USB-powered) — omit the icon rather than
+                    // show a fabricated reading.
+                    statusbar_render(s_bar_buf, w, STATUS_BAR_H, bars, m.line1, -1, HUD_FG, HUD_BG);
+                    display_flush(0, 0, w, STATUS_BAR_H, s_bar_buf);
+                }
             }
             if (m.play_voice) {
                 // Mute the mic for the clip's duration + tail so the announcement
@@ -178,21 +231,57 @@ static void status_task(void *arg) {
         }
         if (idle_eyes_active) {
             int w = display_width(), h = display_height();
+            int eyes_h = h - STATUS_BAR_H;
             int band_y, band_h;
-            robot_eyes_dirty_band(h, &band_y, &band_h);
+            robot_eyes_dirty_band(eyes_h, &band_y, &band_h);
             if (!s_eyes_buf) {
                 s_eyes_buf = heap_caps_malloc((size_t)w * band_h * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
                 if (!s_eyes_buf) {
-                    // Text (m.line1/line2) is already showing from above —
-                    // just stop trying to animate, don't overwrite it again.
                     ESP_LOGE(TAG, "robot_eyes: PSRAM alloc failed, falling back to text");
                     idle_eyes_active = false;
+                    display_show(m.line1, m.has_line2 ? m.line2 : NULL);
                     continue;
                 }
             }
             uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
-            robot_eyes_render(s_eyes_buf, w, band_h, h, band_y, now_ms, EYES_COLOR, EYES_BG);
-            display_flush(0, band_y, w, band_h, s_eyes_buf);
+            robot_eyes_render(s_eyes_buf, w, band_h, eyes_h, band_y, now_ms,
+                               m.emotion, EYES_COLOR, EYES_BG);
+            display_flush(0, STATUS_BAR_H + band_y, w, band_h, s_eyes_buf);
+
+            // Decorations (mouth/"Zzz"/waves) are a separate,
+            // independently-sized band deliberately NOT folded into the
+            // eyes' own dirty band — most emotions have none, and always
+            // paying for the extra region would tax every frame's
+            // already-tight SPI budget for a decoration only some emotions
+            // ever show.
+            robot_decor_t decor = robot_eyes_decor_for(m.emotion);
+            if (decor != s_active_decor && s_active_decor != ROBOT_DECOR_NONE) {
+                // Switching away from a decor that lived in a DIFFERENT
+                // band than the new one (MOUTH/WAVES are below the eyes,
+                // ZZZ is above) — nothing else will ever repaint that old
+                // band, so clear it explicitly or it lingers on screen.
+                int old_y, old_h;
+                robot_eyes_decor_band(eyes_h, s_active_decor, &old_y, &old_h);
+                if (s_decor_buf && s_decor_buf_h >= old_h) {
+                    gfx_fill_rect(s_decor_buf, w, old_h, 0, 0, w, old_h, EYES_BG);
+                    display_flush(0, STATUS_BAR_H + old_y, w, old_h, s_decor_buf);
+                }
+            }
+            s_active_decor = decor;
+            if (decor != ROBOT_DECOR_NONE) {
+                int decor_y, decor_h;
+                robot_eyes_decor_band(eyes_h, decor, &decor_y, &decor_h);
+                if (!s_decor_buf || s_decor_buf_h < decor_h) {
+                    if (s_decor_buf) heap_caps_free(s_decor_buf);
+                    s_decor_buf = heap_caps_malloc((size_t)w * decor_h * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+                    s_decor_buf_h = s_decor_buf ? decor_h : 0;
+                }
+                if (s_decor_buf) {
+                    robot_eyes_render_decor(s_decor_buf, w, decor_h, eyes_h, decor_y,
+                                             now_ms, decor, EYES_COLOR, EYES_BG);
+                    display_flush(0, STATUS_BAR_H + decor_y, w, decor_h, s_decor_buf);
+                }
+            }
         }
     }
 }
@@ -203,7 +292,8 @@ static void status_task(void *arg) {
 // — omitted it, silently killing the idle animation the moment volume was
 // adjusted while idle).
 static void send_idle_status(const char *line1) {
-    status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true };
+    status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true,
+                        .emotion = ROBOT_EMOTION_SLEEPY };
     strncpy(m.line1, line1, sizeof(m.line1) - 1);
     strncpy(m.line2, "Press wake to talk", sizeof(m.line2) - 1);
     xQueueSend(s_status_q, &m, 0);
@@ -227,7 +317,8 @@ static void on_button(button_id_t id) {
             s_barge_in = true;   // spk_task flushes the queue + resets I2S/opus
             s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
             ws_client_send_abort("user");
-            status_msg_t m = { .play_voice = false, .has_line2 = true };
+            status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true,
+                                .emotion = ROBOT_EMOTION_SURPRISED };
             strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
             strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
             xQueueSend(s_status_q, &m, 0);
@@ -239,7 +330,8 @@ static void on_button(button_id_t id) {
         ws_client_set_reconnect(s_active);
         s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
         if (s_active) {
-            status_msg_t m = { .play_voice = false, .has_line2 = true };
+            status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true,
+                                .emotion = ROBOT_EMOTION_SURPRISED };
             strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
             strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
             xQueueSend(s_status_q, &m, 0);
@@ -251,12 +343,11 @@ static void on_button(button_id_t id) {
     case BTN_VOL_UP:
     case BTN_VOL_DOWN: {
         int v = audio_adjust_volume(id == BTN_VOL_UP ? 10 : -10);
-        // show_idle_eyes = !s_active: if the device is idle, keep the eyes
-        // animation running instead of showing this line (matches every
-        // other idle-preserving path) — without this, adjusting volume
-        // while idle used to permanently replace the animation with a
-        // static "Volume NN%" line that nothing ever cleared.
-        status_msg_t m = { .play_voice = false, .has_line2 = false, .show_idle_eyes = !s_active };
+        // The HUD (status bar + eyes) is now the universal display mode for
+        // every conversational state, so volume feedback shows through the
+        // status bar text like everything else instead of a special-cased
+        // full-text screen.
+        status_msg_t m = { .play_voice = false, .has_line2 = false, .show_idle_eyes = true };
         snprintf(m.line1, sizeof(m.line1), "Volume %d%%", v);
         xQueueSend(s_status_q, &m, 0);
         break;
@@ -274,11 +365,13 @@ static void on_event(const lugo_event_t *ev) {
         // Chime only the first time; reconnect-welcomes (e.g. after an idle
         // goodbye) update the screen silently so an unattended device doesn't
         // chime on a loop. (Full sleep-until-wake is Phase 2 / MQTT.)
-        status_msg_t m = { .play_voice = !s_welcomed_once, .voice = VOICE_CONNECTED, .has_line2 = true };
+        status_msg_t m = { .play_voice = !s_welcomed_once, .voice = VOICE_CONNECTED,
+                            .has_line2 = true, .show_idle_eyes = true };
         s_welcomed_once = true;
         // If this welcome is a wake-triggered reconnect (user already active),
         // show Listening so the screen doesn't misleadingly say "Press wake".
         if (s_active) {
+            m.emotion = ROBOT_EMOTION_SURPRISED;
             strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
             strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
         } else {
@@ -293,7 +386,8 @@ static void on_event(const lugo_event_t *ev) {
     case LUGO_EV_TTS_START: {
         s_turn_ending = false;
         s_state = APP_SPEAKING;
-        status_msg_t m = { .play_voice = false, .has_line2 = false };
+        status_msg_t m = { .play_voice = false, .has_line2 = false, .show_idle_eyes = true,
+                            .emotion = ROBOT_EMOTION_HAPPY };
         strncpy(m.line1, "Speaking", sizeof(m.line1) - 1);
         xQueueSend(s_status_q, &m, 0);
         break;
@@ -308,7 +402,8 @@ static void on_event(const lugo_event_t *ev) {
         } else {
             s_state = APP_LISTENING;
             if (s_active) {
-                status_msg_t m = { .play_voice = false, .has_line2 = true };
+                status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true,
+                                    .emotion = ROBOT_EMOTION_SURPRISED };
                 strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
                 strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
                 xQueueSend(s_status_q, &m, 0);
@@ -447,7 +542,8 @@ static void spk_task(void *arg) {
                 s_turn_ending = false;
                 s_state = APP_LISTENING;
                 if (s_active) {
-                    status_msg_t m = { .play_voice = false, .has_line2 = true };
+                    status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true,
+                                        .emotion = ROBOT_EMOTION_SURPRISED };
                     strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
                     strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
                     xQueueSend(s_status_q, &m, 0);
@@ -489,9 +585,16 @@ static void show_boot_color_bars(void) {
     if (w <= 0 || h <= 0) return;   // no pixel panel on this board (flush unset)
     int band_h = h / 5;
     if (band_h < 1) band_h = 1;
-    static uint16_t buf[320 * 64];  // one band at a time; covers panels up to 320 wide, 64 tall/band
-    if ((size_t)w * (size_t)band_h > sizeof(buf) / sizeof(buf[0])) {
-        ESP_LOGW(TAG, "boot color test: panel band too large for scratch buffer, skipping");
+    // PSRAM, not a static internal-RAM array: this only runs once at boot,
+    // right before audio_init() sets up the mic's I2S DMA — a large `static`
+    // buffer here permanently reserves internal SRAM for the rest of the
+    // device's life (static storage is allocated whether or not this
+    // function ever runs), competing with whatever internal RAM the I2S
+    // driver wants. Same MALLOC_CAP_SPIRAM already proven safe for the same
+    // display_flush path by the robot_eyes buffer.
+    uint16_t *buf = heap_caps_malloc((size_t)w * band_h * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+    if (!buf) {
+        ESP_LOGW(TAG, "boot color test: PSRAM alloc failed, skipping");
         return;
     }
     static const uint16_t colors[5] = {
@@ -505,6 +608,7 @@ static void show_boot_color_bars(void) {
         gfx_fill_rect(buf, w, band_h, 0, 0, w, band_h, colors[i]);
         display_flush(0, i * band_h, w, band_h, buf);
     }
+    heap_caps_free(buf);
 }
 
 void app_main(void) {

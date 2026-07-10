@@ -52,3 +52,10 @@ bool wifi_sta_wait_connected(int timeout_ms) {
         s_events, BIT_CONNECTED, pdFALSE, pdTRUE, pdMS_TO_TICKS(timeout_ms));
     return (bits & BIT_CONNECTED) != 0;
 }
+
+bool wifi_sta_get_rssi(int *out_dbm) {
+    wifi_ap_record_t info;
+    if (esp_wifi_sta_get_ap_info(&info) != ESP_OK) return false;   // not associated
+    *out_dbm = info.rssi;
+    return true;
+}

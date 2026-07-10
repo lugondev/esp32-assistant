@@ -24,11 +24,17 @@ GFX_CFLAGS = -std=c11 -Wall -Wextra -g -O0 -I../components/gfx/include
 SRC_GFX = ../components/gfx/gfx.c
 
 ROBOT_EYES_CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
-                     -I../components/robot_eyes/include -I../components/gfx/include
-SRC_ROBOT_EYES = ../components/robot_eyes/robot_eyes.c ../components/gfx/gfx.c
+                     -I../components/robot_eyes/include -I../components/gfx/include \
+                     -I../components/display/include
+SRC_ROBOT_EYES = ../components/robot_eyes/robot_eyes.c ../components/gfx/gfx.c ../components/display/display_font.c
+
+STATUSBAR_CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
+                    -I../components/statusbar/include -I../components/gfx/include \
+                    -I../components/display/include
+SRC_STATUSBAR = ../components/statusbar/statusbar.c ../components/gfx/gfx.c ../components/display/display_font.c
 
 .PHONY: test
-test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_protocol test_mcp_server test_board_select test_board_facades test_gfx test_robot_eyes
+test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_protocol test_mcp_server test_board_select test_board_facades test_gfx test_robot_eyes test_statusbar
 	./test_provisioning_ssid
 	./test_provisioning_form
 	./test_display_font
@@ -38,6 +44,7 @@ test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_
 	./test_board_facades
 	./test_gfx
 	./test_robot_eyes
+	./test_statusbar
 
 test_provisioning_ssid: test_provisioning_ssid.c $(SRC_PROVISIONING_SSID)
 	$(CC) $(CFLAGS) -o $@ $^
@@ -66,6 +73,9 @@ test_gfx: test_gfx.c $(SRC_GFX)
 test_robot_eyes: test_robot_eyes.c $(SRC_ROBOT_EYES)
 	$(CC) $(ROBOT_EYES_CFLAGS) -o $@ $^
 
+test_statusbar: test_statusbar.c $(SRC_STATUSBAR)
+	$(CC) $(STATUSBAR_CFLAGS) -o $@ $^
+
 clean:
 	rm -rf test_provisioning_ssid test_provisioning_ssid.dSYM \
 	       test_provisioning_form test_provisioning_form.dSYM \
@@ -75,4 +85,5 @@ clean:
 	       test_board_select test_board_select.dSYM \
 	       test_board_facades test_board_facades.dSYM \
 	       test_gfx test_gfx.dSYM \
-	       test_robot_eyes test_robot_eyes.dSYM
+	       test_robot_eyes test_robot_eyes.dSYM \
+	       test_statusbar test_statusbar.dSYM
