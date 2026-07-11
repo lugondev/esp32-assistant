@@ -45,6 +45,7 @@ config AA_SPK_DIN
 
 choice AA_BOARD
     prompt "Target board"
+    default AA_BOARD_AUTODETECT
 
 config AA_BOARD_LUGO_S3_ST7789
     bool "Lugo S3 (ST7789 + MAX98357A/INMP441 dual-I2S)"
