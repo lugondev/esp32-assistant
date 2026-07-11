@@ -1,0 +1,5 @@
+{
+  "name": "MAX98357A",
+  "author": "esp32-assistant",
+  "pins": ["VIN", "GND", "SD", "GAIN", "DIN", "BCLK", "LRC"]
+}

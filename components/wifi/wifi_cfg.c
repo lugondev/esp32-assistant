@@ -18,6 +18,8 @@ static esp_err_t load_str(nvs_handle_t h, const char *key, char *out,
 
 esp_err_t wifi_cfg_load(wifi_cfg_t *out) {
     memset(out, 0, sizeof(*out));
+    strncpy(out->ssid, CONFIG_AA_WIFI_SSID, sizeof(out->ssid) - 1);
+    strncpy(out->password, CONFIG_AA_WIFI_PASS, sizeof(out->password) - 1);
     strncpy(out->server_host, CONFIG_AA_SERVER_HOST, sizeof(out->server_host) - 1);
     out->server_port = CONFIG_AA_SERVER_PORT;
 
@@ -28,9 +30,9 @@ esp_err_t wifi_cfg_load(wifi_cfg_t *out) {
     }
     if (err != ESP_OK) return err;
 
-    err = load_str(h, "ssid", out->ssid, sizeof(out->ssid), "");
+    err = load_str(h, "ssid", out->ssid, sizeof(out->ssid), CONFIG_AA_WIFI_SSID);
     if (err != ESP_OK) { nvs_close(h); return err; }
-    err = load_str(h, "pass", out->password, sizeof(out->password), "");
+    err = load_str(h, "pass", out->password, sizeof(out->password), CONFIG_AA_WIFI_PASS);
     if (err != ESP_OK) { nvs_close(h); return err; }
     err = load_str(h, "host", out->server_host, sizeof(out->server_host),
                    CONFIG_AA_SERVER_HOST);

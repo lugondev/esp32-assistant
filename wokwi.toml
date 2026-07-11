@@ -1,0 +1,21 @@
+# Points at build-wokwi/, a separate build dir + sdkconfig
+# (sdkconfig.wokwi.generated, layered with sdkconfig.wokwi) from the
+# real-hardware build/ + sdkconfig. Rebuild after firmware changes with:
+#   idf.py -B build-wokwi build
+# (sdkconfig.wokwi.generated already has CONFIG_AA_SKIP_AUDIO_INIT=y from the
+# earlier `idf.py -B build-wokwi -D SDKCONFIG=sdkconfig.wokwi.generated
+# -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.esp32s3;sdkconfig.wokwi"
+# set-target esp32s3` — no need to repeat that unless build-wokwi/ is deleted.)
+[wokwi]
+version = 1
+firmware = 'build-wokwi/flasher_args.json'
+elf = 'build-wokwi/esp32-assistant.elf'
+gdbServerPort = 3333
+
+[[chip]]
+name = 'inmp441'
+binary = 'inmp441.chip.wasm'
+
+[[chip]]
+name = 'max98357a'
+binary = 'max98357a.chip.wasm'

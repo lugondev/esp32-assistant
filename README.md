@@ -189,6 +189,16 @@ system C compiler (`cc`) are needed.
 
 ---
 
+## Wokwi simulation (board/display/WiFi only, not voice)
+
+This repo has a Wokwi setup (`wokwi.toml`, `diagram.json`) for running the firmware without
+hardware — see [WOKWI.md](WOKWI.md) for the build steps, custom-chip compilation, and, importantly,
+its limitations: Wokwi cannot simulate I2S at all (neither the chip API nor the ESP32-S3's own I2S
+HAL), so mic/speaker are stubbed out and voice round-trip cannot be tested this way. It's useful
+for board-autodetect, display, WiFi, and button-logic regressions only.
+
+---
+
 ## Known limitations
 
 **Opus managed component:** `idf_component.yml` requests `78/esp-opus: "*"` — the libopus

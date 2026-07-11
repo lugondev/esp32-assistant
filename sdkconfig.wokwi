@@ -1,0 +1,13 @@
+# Wokwi-only override — layered on top of sdkconfig.defaults(.esp32s3) via
+# SDKCONFIG_DEFAULTS. Never use this for a real-hardware build.
+#
+# Wokwi's simulated I2S peripheral never signals clock-ready, so
+# mic_init()/speaker_init() (via i2s_channel_enable) hang forever on boot in
+# the simulator. This skips the actual I2S bring-up so app_main() can reach
+# WiFi/display/buttons — see AA_SKIP_AUDIO_INIT's help in Kconfig.projbuild.
+CONFIG_AA_SKIP_AUDIO_INIT=y
+
+# Wokwi's fixed virtual AP — lets STA connect succeed in sim without going
+# through the (un-simulatable) phone-joins-the-ESP32's-AP provisioning flow.
+CONFIG_AA_WIFI_SSID="Wokwi-GUEST"
+CONFIG_AA_WIFI_PASS=""

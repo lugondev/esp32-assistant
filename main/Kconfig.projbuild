@@ -12,6 +12,19 @@ config AA_SERVER_SECURE
     bool "Use wss:// (TLS)"
     default n
 
+config AA_WIFI_SSID
+    string "Fallback WiFi SSID (used only until provisioning saves one to NVS)"
+    default ""
+    help
+        Real devices always provision over the captive portal, so this stays
+        empty for hardware builds. Set to "Wokwi-GUEST" (Wokwi's fixed virtual
+        AP name) only in a Wokwi-specific sdkconfig, so STA connect succeeds
+        in simulation without going through the (un-simulatable) AP-join flow.
+
+config AA_WIFI_PASS
+    string "Fallback WiFi password (paired with AA_WIFI_SSID)"
+    default ""
+
 config AA_PROFILE
     string "Chatllm profile name"
     default ""
@@ -42,6 +55,20 @@ config AA_SPK_LRC
 config AA_SPK_DIN
     int "MAX98357A speaker I2S DIN (data into amp) gpio"
     default 7
+
+config AA_SKIP_AUDIO_INIT
+    bool "Skip mic/speaker I2S hardware init (Wokwi simulation only)"
+    default n
+    help
+        Wokwi's simulated ESP32-S3 I2S peripheral never sets the clock-ready
+        flag that i2s_channel_enable() polls for, so mic_init()/speaker_init()
+        hang forever on boot in the simulator (confirmed via task-watchdog
+        backtrace: stuck in i2s_ll_rx_start, called from mic_init audio_init
+        app_main). Real hardware is unaffected and does not need this.
+        Enabling this makes audio_init() skip the actual I2S bring-up; the
+        audio_mic_read/audio_spk_write/etc. wrappers become no-ops so the
+        rest of app_main() (WiFi, display, buttons, gateway) still runs.
+        Leave off for any real-hardware build.
 
 choice AA_BOARD
     prompt "Target board"

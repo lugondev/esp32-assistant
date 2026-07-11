@@ -1,0 +1,5 @@
+{
+  "name": "INMP441",
+  "author": "esp32-assistant",
+  "pins": ["VDD", "GND", "L_R", "WS", "SCK", "SD"]
+}

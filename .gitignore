@@ -17,5 +17,16 @@ sdkconfig.old
 managed_components/
 dependencies.lock
 
+# Wokwi-only build output (see wokwi.toml; sdkconfig.wokwi is the tracked
+# source override, sdkconfig.wokwi.generated is the merged output)
+build-wokwi/
+sdkconfig.wokwi.generated
+sdkconfig.wokwi.generated.old
+
 # Editor / tooling caches
 .cache/
+
+# Wokwi custom-chip build output (recompile with `wokwi-cli chip compile`;
+# sources like *.chip.c/*.chip.json are tracked)
+*.chip.wasm
+wokwi-api.h
