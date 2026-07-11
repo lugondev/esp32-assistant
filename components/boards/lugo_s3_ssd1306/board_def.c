@@ -1,4 +1,5 @@
 #include "board.h"
+#include "board_i2c_probe.h"
 #include "i2s_mic.h"
 #include "i2s_speaker.h"
 #include "display_ssd1306.h"
@@ -23,11 +24,15 @@ static const buttons_gpio_cfg_t buttons_cfg = {
     .wake = 47, .vol_up = 40, .vol_down = 39,
 };
 
-// Kconfig-forced like lugo_s3_st7789 — match() is only consulted under
-// AA_BOARD_AUTODETECT, where two ESP32-S3 boards both unconditionally
-// matching would be ambiguous; pick one explicitly via AA_BOARD_FORCE
-// instead (the Kconfig default) when both are compiled into the same build.
-static bool match(void) { return true; }
+// Real probe for AA_BOARD_AUTODETECT: an SSD1306 ACKs I2C at 0x3C or 0x3D
+// on the same scl/sda pins display_cfg uses below. lugo-s3-st7789's
+// match() is the logical inverse of this same check (see that file), so
+// exactly one of the two S3 boards matches regardless of link/registration
+// order.
+static bool match(void) {
+    return board_i2c_probe(display_cfg.scl, display_cfg.sda, display_cfg.i2c_addr, 50) ||
+           board_i2c_probe(display_cfg.scl, display_cfg.sda, 0x3D, 50);
+}
 
 LUGO_BOARD_REGISTER(board_lugo_s3_ssd1306) {
     .name        = "lugo-s3-ssd1306",
