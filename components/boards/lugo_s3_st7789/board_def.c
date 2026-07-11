@@ -1,4 +1,5 @@
 #include "board.h"
+#include "board_i2c_probe.h"
 #include "i2s_mic.h"
 #include "i2s_speaker.h"
 #include "display_st7789.h"
@@ -34,7 +35,16 @@ static const buttons_gpio_cfg_t buttons_cfg = {
 //     .r1_ohms = 100000, .r2_ohms = 100000,
 // };
 
-static bool match(void) { return true; }   // Kconfig-forced; single S3 board
+// Real probe for AA_BOARD_AUTODETECT: the logical inverse of
+// lugo-s3-ssd1306's match(). Its scl/sda are these same physical pins
+// (used here as SPI sclk/mosi instead) — if an SSD1306 ACKs I2C at
+// 0x3C/0x3D there, this board loses; if neither answers, this board wins,
+// which makes ST7789 the deterministic default when nothing is wired at
+// all (matching this board's original single-board behavior).
+static bool match(void) {
+    return !(board_i2c_probe(display_cfg.sclk, display_cfg.mosi, 0x3C, 50) ||
+              board_i2c_probe(display_cfg.sclk, display_cfg.mosi, 0x3D, 50));
+}
 
 LUGO_BOARD_REGISTER(board_lugo_s3_st7789) {
     .name        = "lugo-s3-st7789",
