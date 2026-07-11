@@ -133,6 +133,10 @@ typedef struct {
 } status_msg_t;
 static QueueHandle_t s_status_q;
 
+// Restores whatever status line the volume overlay ("Volume NN%") is
+// temporarily covering up, 0.5s after the last volume button press.
+static esp_timer_handle_t s_volume_revert_timer;
+
 // Real ceiling, not a nice round number: the panel's SPI bus is clocked at
 // 4MHz single-line (st7789_init's pclk_hz) = ~500KB/s. Flushing only the
 // eyes' dirty band (robot_eyes_dirty_band — about half the panel's rows;
@@ -318,6 +322,54 @@ static void send_idle_status(const char *line1) {
     xQueueSend(s_status_q, &m, 0);
 }
 
+// Common "go idle" transition: stop auto-reconnect, mute the mic, show the
+// idle screen. Shared by the Wake button (toggling off) and the MCP
+// self.device.idle tool (registered via mcp_tools_set_idle_hook below) so a
+// voice "go to sleep" request drives the same real transition as the button.
+static void go_idle(void) {
+    s_active = false;
+    ws_client_set_reconnect(false);
+    s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
+    send_idle_status("Idle");
+}
+
+// Common "Volume NN%" overlay + auto-revert arm. Shared by the Vol +/-
+// buttons and the MCP self.audio.set_volume tool (registered via
+// mcp_tools_set_volume_hook below) so a voice-driven volume change gets the
+// same on-screen feedback as a physical button press.
+static void show_volume_overlay(int v) {
+    status_msg_t m = { .play_voice = false, .has_line2 = false, .show_idle_eyes = true };
+    snprintf(m.line1, sizeof(m.line1), "Volume %d%%", v);
+    xQueueSend(s_status_q, &m, 0);
+    // (Re)arm the revert timer so repeated changes keep pushing it out — the
+    // overlay only reverts 0.5s after the LAST change, not the first.
+    esp_timer_stop(s_volume_revert_timer);  // no-op (ESP_ERR_INVALID_STATE) if not running
+    esp_timer_start_once(s_volume_revert_timer, 500000);
+}
+
+// esp_timer callback (runs on the esp_timer service task, not the button task) —
+// fires 0.5s after the last volume press and restores the status line that was
+// showing before "Volume NN%" covered it. Re-derives it from s_state/s_active
+// instead of caching the prior text, so it can't go stale if state changed
+// while the overlay was up (e.g. TTS started mid-adjustment).
+static void volume_revert_cb(void *arg) {
+    (void)arg;
+    if (s_state == APP_SPEAKING) {
+        status_msg_t m = { .play_voice = false, .has_line2 = false, .show_idle_eyes = true,
+                            .emotion = ROBOT_EMOTION_HAPPY };
+        strncpy(m.line1, "Speaking", sizeof(m.line1) - 1);
+        xQueueSend(s_status_q, &m, 0);
+    } else if (s_active) {
+        status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true,
+                            .emotion = ROBOT_EMOTION_SURPRISED };
+        strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
+        strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
+        xQueueSend(s_status_q, &m, 0);
+    } else {
+        send_idle_status("Idle");
+    }
+}
+
 // Runs in the button task context — only flips flags, adjusts the volume int,
 // queues display messages, and sends a WS control frame (network, not
 // hardware). It must never call display/audio hardware directly.
@@ -345,30 +397,27 @@ static void on_button(button_id_t id) {
         }
         // Not speaking: toggle idle/listening. Waking re-enables the link (it may
         // be asleep after an idle goodbye); going idle puts it back to sleep.
-        s_active = !s_active;
-        ws_client_set_reconnect(s_active);
-        s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
         if (s_active) {
+            go_idle();
+        } else {
+            s_active = true;
+            ws_client_set_reconnect(true);
+            s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
             status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true,
                                 .emotion = ROBOT_EMOTION_SURPRISED };
             strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
             strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
             xQueueSend(s_status_q, &m, 0);
-        } else {
-            send_idle_status("Idle");
         }
         break;
     }
     case BTN_VOL_UP:
     case BTN_VOL_DOWN: {
-        int v = audio_adjust_volume(id == BTN_VOL_UP ? 10 : -10);
         // The HUD (status bar + eyes) is now the universal display mode for
         // every conversational state, so volume feedback shows through the
         // status bar text like everything else instead of a special-cased
         // full-text screen.
-        status_msg_t m = { .play_voice = false, .has_line2 = false, .show_idle_eyes = true };
-        snprintf(m.line1, sizeof(m.line1), "Volume %d%%", v);
-        xQueueSend(s_status_q, &m, 0);
+        show_volume_overlay(audio_adjust_volume(id == BTN_VOL_UP ? 10 : -10));
         break;
     }
     }
@@ -666,6 +715,15 @@ void app_main(void) {
     s_uplinkq = xQueueCreate(16, sizeof(uplink_pkt_t *));
     s_status_q = xQueueCreate(4, sizeof(status_msg_t));
     xTaskCreatePinnedToCore(status_task, "status", 8192, NULL, 4, NULL, APP_CPU_AUDIO);
+    const esp_timer_create_args_t vol_timer_args = {
+        .callback = &volume_revert_cb, .name = "vol_revert",
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&vol_timer_args, &s_volume_revert_timer));
+    // Voice-driven self.device.idle / self.audio.set_volume MCP tools reuse the
+    // same transitions as the physical buttons (go_idle / show_volume_overlay
+    // need s_status_q + s_volume_revert_timer, both created above).
+    mcp_tools_set_idle_hook(go_idle);
+    mcp_tools_set_volume_hook(show_volume_overlay);
     buttons_start(on_button);  // Wake toggles s_active; Vol +/- adjust volume
     xTaskCreate(idle_watchdog_task, "idle_wd", 3072, NULL, 3, NULL);
 

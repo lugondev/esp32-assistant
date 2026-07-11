@@ -19,3 +19,13 @@ void mcp_tools_init(void);
 // Handle one mcp payload against every LUGO_MCP_TOOL-registered tool.
 // Target-only (walks the real linker section) — not host-tested.
 int mcp_tools_dispatch(const char *mcp_payload, char *out_buf, int out_cap);
+
+// device_tools.c / audio_tools.c own app-level state (s_state, s_active,
+// s_status_q, ...) that mcp_tools must not reach into directly — main and
+// mcp_tools would form a circular component dependency. Instead main.c
+// registers these hooks once at startup (same dependency-inversion pattern as
+// buttons_start(on_button)); the tool functions call them if set, so
+// self.device.idle / self.audio.set_volume drive the real FSM transition and
+// on-screen feedback instead of only answering the LLM.
+void mcp_tools_set_idle_hook(void (*cb)(void));
+void mcp_tools_set_volume_hook(void (*cb)(int volume));

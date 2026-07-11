@@ -14,14 +14,17 @@ LUGO_MCP_TOOL(tool_get_status) {
     .props = NULL, .requires_confirm = false, .fn = status_fn,
 };
 
+// Set by main.c at startup (mcp_tools_set_idle_hook) so idle_fn can drive the
+// real FSM transition instead of only answering the LLM. NULL until main.c
+// registers it, and in host tests, which is safe: idle_fn degrades to the old
+// answer-only behavior.
+static void (*s_idle_hook)(void) = NULL;
+
+void mcp_tools_set_idle_hook(void (*cb)(void)) { s_idle_hook = cb; }
+
 static mcp_result_t idle_fn(const char *args) {
     (void)args;
-    // Phase 1: no direct FSM hook exists yet from a tool callback context;
-    // WS idle-timeout already drives the sleep transition (see
-    // [[lugo-device-protocol]] connect-on-wake lifecycle). This tool answers
-    // affirmatively so the LLM can say "okay, resting" — the actual
-    // WS-level idle/goodbye still governs the real disconnect. Revisit if a
-    // direct main.c FSM hook becomes necessary.
+    if (s_idle_hook) s_idle_hook();
     return mcp_ok_text("going idle");
 }
 LUGO_MCP_TOOL(tool_idle) {
