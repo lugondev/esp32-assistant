@@ -30,3 +30,5 @@ sdkconfig.wokwi.generated.old
 # sources like *.chip.c/*.chip.json are tracked)
 *.chip.wasm
 wokwi-api.h
+test/test_battery_logic
+test/test_statusbar

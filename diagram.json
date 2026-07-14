@@ -13,8 +13,8 @@
     {
       "type": "wokwi-ssd1306",
       "id": "oled1",
-      "top": 20,
-      "left": 320,
+      "top": -190,
+      "left": 300,
       "attrs": {}
     },
     {
