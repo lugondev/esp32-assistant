@@ -51,6 +51,7 @@ table below covers the gateway/hardware settings that remain compile-time.
 | TTS engine | `AA_TTS_ENGINE` | `vieneu` | Must match server |
 | Language hint | `AA_LANGUAGE` | `vi` | BCP-47 code |
 | Chatllm profile (optional) | `AA_PROFILE` | *(empty)* | Named profile from `POST /v1/profiles` — bundles LLM model/system prompt/TTS/MCP/memory |
+| Device WS auth token | `AA_DEVICE_TOKEN` | *(empty)* | Sent as `?device_token=` on `/v1/lugo/stream`; must match the gateway's `DEVICE_AUTH_TOKEN` env var (see note below) |
 | ES8311 I2C SDA | `AA_I2C_SDA` | 1 | |
 | ES8311 I2C SCL | `AA_I2C_SCL` | 2 | |
 | I2S MCLK | `AA_I2S_MCLK` | 16 | |
@@ -62,6 +63,18 @@ table below covers the gateway/hardware settings that remain compile-time.
 
 The GPIO defaults match one common ESP32-S3 dev-kit wiring; **you must set the pin values for
 your specific board** before building.
+
+> **`AA_DEVICE_TOKEN` is a stopgap, not real device auth.** The gateway's
+> `/v1/lugo/stream` requires a credential once server-side auth is enabled
+> (`ADMIN_PASSWORD`/`ADMIN_BOOTSTRAP_PASSWORD` set) — see [`resolve_ws_identity`](../apps/api_gateway/app/core/auth_guard.py).
+> Today every device shares one secret (set here and as the gateway's
+> `DEVICE_AUTH_TOKEN` env var); there is no per-device pairing, revocation, or
+> identity yet. **Revisit this when the real pairing flow lands in firmware**
+> (`POST /v1/devices/pair/init` → show code on display → poll
+> `/v1/devices/pair/status` → persist per-device token in NVS → connect with
+> that instead — server endpoints already exist in
+> [`routes/devices.py`](../apps/api_gateway/app/api/routes/devices.py)), then
+> delete `AA_DEVICE_TOKEN` and the gateway's shared `DEVICE_AUTH_TOKEN`.
 
 ---
 

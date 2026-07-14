@@ -733,7 +733,7 @@ void app_main(void) {
     s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
     ESP_ERROR_CHECK(ws_client_start(
         cfg.server_host, cfg.server_port, CONFIG_AA_SERVER_SECURE,
-        CONFIG_AA_PROFILE, 16000, 16000, 60, on_event, on_audio));
+        CONFIG_AA_PROFILE, CONFIG_AA_DEVICE_TOKEN, 16000, 16000, 60, on_event, on_audio));
 
     // mic_task runs opus_encode(), which is extraordinarily stack-hungry on
     // ESP32 (SILK wideband analysis buffers live on the stack): measured

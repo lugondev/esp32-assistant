@@ -19,8 +19,11 @@ typedef void (*ws_audio_cb_t)(const uint8_t *opus, int len);
 // Connect to WS /v1/lugo/stream and, on connect, send the Lugo `wakeup`
 // handshake declaring `profile` + audio params. Downlink audio arrives v3-framed
 // and is delivered (opus payload only) via on_audio; JSON events via on_event.
+// device_token (may be NULL/empty) is sent as the ?device_token= query param
+// required by the gateway once auth is enabled (see CONFIG_AA_DEVICE_TOKEN).
 esp_err_t ws_client_start(const char *host, int port, bool secure,
-                          const char *profile, int in_sr, int out_sr, int frame_ms,
+                          const char *profile, const char *device_token,
+                          int in_sr, int out_sr, int frame_ms,
                           ws_event_cb_t on_event, ws_audio_cb_t on_audio);
 int  ws_client_send_audio(const uint8_t *opus, int len);  // raw opus uplink
 int  ws_client_send_abort(const char *reason);

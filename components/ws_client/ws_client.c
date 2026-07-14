@@ -111,17 +111,25 @@ void ws_client_set_reconnect(bool enabled) {
 }
 
 esp_err_t ws_client_start(const char *host, int port, bool secure,
-                          const char *profile, int in_sr, int out_sr, int frame_ms,
+                          const char *profile, const char *device_token,
+                          int in_sr, int out_sr, int frame_ms,
                           ws_event_cb_t on_event, ws_audio_cb_t on_audio) {
     s_on_event = on_event; s_on_audio = on_audio;
     strncpy(s_profile, profile ? profile : "", sizeof(s_profile) - 1);
     s_in_sr = in_sr; s_out_sr = out_sr; s_frame_ms = frame_ms;
 
     static char uri[512];
-    int n = snprintf(uri, sizeof uri, "%s://%s:%d/v1/lugo/stream",
-                     secure ? "wss" : "ws", host, port);
+    // device_token is a plain alnum/-/_ secret (base64url-style), so no URL
+    // escaping is needed in the query param.
+    int n = (device_token && device_token[0])
+        ? snprintf(uri, sizeof uri, "%s://%s:%d/v1/lugo/stream?device_token=%s",
+                   secure ? "wss" : "ws", host, port, device_token)
+        : snprintf(uri, sizeof uri, "%s://%s:%d/v1/lugo/stream",
+                   secure ? "wss" : "ws", host, port);
     if (n < 0 || n >= (int)sizeof uri) return ESP_FAIL;
-    ESP_LOGI(TAG, "uri=%s", uri);
+    // Never log the token itself (goes to the serial console).
+    ESP_LOGI(TAG, "uri=%s://%s:%d/v1/lugo/stream%s", secure ? "wss" : "ws", host, port,
+             (device_token && device_token[0]) ? "?device_token=<redacted>" : "");
 
     esp_websocket_client_config_t wc = {
         .uri = uri, .network_timeout_ms = 10000,

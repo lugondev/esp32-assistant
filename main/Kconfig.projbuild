@@ -36,6 +36,19 @@ config AA_PROFILE
         use, not the engines. Leave empty to fall back to the server's own .env
         defaults (30s idle timeout, default engines).
 
+config AA_DEVICE_TOKEN
+    string "Device WS auth token (stopgap shared secret)"
+    default ""
+    help
+        Sent as ?device_token=<value> on the /v1/lugo/stream WS URI. Must match
+        the gateway's DEVICE_AUTH_TOKEN env var when the gateway has auth
+        enabled (ADMIN_PASSWORD or ADMIN_BOOTSTRAP_PASSWORD set) — otherwise
+        the WS upgrade is rejected with HTTP 403 before ever reaching the app.
+        This is a temporary shared-secret stopgap (same token on every device).
+        TODO: replace with the real per-device pairing flow (POST
+        /v1/devices/pair/init + claim) once firmware supports it, then leave
+        this empty.
+
 config AA_MIC_WS
     int "INMP441 mic I2S WS/LRCK gpio"
     default 4
