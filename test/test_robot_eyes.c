@@ -368,6 +368,33 @@ static void test_render_is_deterministic(void) {
     for (int i = 0; i < DW * DH; i++) CHECK(a[i] == b[i]);
 }
 
+static void test_happy_family_is_top_heavy_arcs(void) {
+    // bottom_cut erases the eye's lower part → EYE pixels above the panel
+    // center must strongly outnumber those below. NEUTRAL (no cut) is the
+    // control: roughly balanced.
+    robot_emotion_t arcs[] = { ROBOT_EMOTION_HAPPY, ROBOT_EMOTION_LAUGHING, ROBOT_EMOTION_GLEE };
+    for (unsigned k = 0; k < 3; k++) {
+        dclear();
+        robot_eyes_render(dbuf, DW, DH, DH, 0, 500, arcs[k], EYE, BG);
+        int above = 0, below = 0, cy = DH / 2;
+        for (int y = 0; y < DH; y++)
+            for (int x = 0; x < DW / 2; x++) {
+                if (dpx(x, y) != EYE) continue;
+                if (y < cy) above++; else below++;
+            }
+        CHECK(above > 2 * below);
+    }
+    dclear();
+    robot_eyes_render(dbuf, DW, DH, DH, 0, 500, ROBOT_EMOTION_NEUTRAL, EYE, BG);
+    int above = 0, below = 0, cy = DH / 2;
+    for (int y = 0; y < DH; y++)
+        for (int x = 0; x < DW / 2; x++) {
+            if (dpx(x, y) != EYE) continue;
+            if (y < cy) above++; else below++;
+        }
+    CHECK(above <= 2 * below);
+}
+
 static void test_asym_emotions_differ_between_eyes(void) {
     robot_emotion_t asym[] = { ROBOT_EMOTION_SKEPTICAL, ROBOT_EMOTION_SUSPICIOUS,
                                ROBOT_EMOTION_ANNOYED, ROBOT_EMOTION_UNIMPRESSED };
@@ -414,6 +441,7 @@ int main(void) {
     test_all_emotions_stay_inside_dirty_band();
     test_render_is_deterministic();
     test_asym_emotions_differ_between_eyes();
+    test_happy_family_is_top_heavy_arcs();
     if (failures) { printf("%d FAILURES\n", failures); return 1; }
     printf("ALL PASS\n");
     return 0;

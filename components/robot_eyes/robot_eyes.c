@@ -147,13 +147,23 @@ bool robot_eyes_is_closed(uint32_t now_ms) {
 static void render_eye_box(uint16_t *buf, int buf_w, int buf_rows,
                             int ex, int ey, int ew, int eh, int corner_r,
                             int glow_pad_x, int glow_pad_y, int brow_slant_pct,
-                            bool is_left, uint16_t eye_color, uint16_t glow_color,
-                            uint16_t bg_color) {
+                            int bottom_cut_pct, bool is_left, uint16_t eye_color,
+                            uint16_t glow_color, uint16_t bg_color) {
     int gw = ew + 2 * glow_pad_x, gh = eh + 2 * glow_pad_y;
     int gr = corner_r + glow_pad_y;
     int gx = ex - glow_pad_x, gy = ey - glow_pad_y;
     gfx_fill_rounded_rect(buf, buf_w, buf_rows, gx, gy, gw, gh, gr, glow_color);
     gfx_fill_rounded_rect(buf, buf_w, buf_rows, ex, ey, ew, eh, corner_r, eye_color);
+
+    if (bottom_cut_pct > 0) {
+        int cut_h = (eh * bottom_cut_pct) / 100;
+        if (cut_h > 0) {
+            // Erase the eye's bottom AND the glow beneath it so the open
+            // arc reads cleanly against the background.
+            int cut_y = ey + eh - cut_h;
+            gfx_fill_rect(buf, buf_w, buf_rows, gx, cut_y, gw, (gy + gh) - cut_y, bg_color);
+        }
+    }
 
     if (brow_slant_pct == 0) return;
     int mag = brow_slant_pct < 0 ? -brow_slant_pct : brow_slant_pct;
@@ -227,7 +237,8 @@ void robot_eyes_render(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
         if (!closed) {
             render_eye_box(buf, buf_w, buf_rows, ex, ey, ew, eh, corner_r,
                             glow_pad_x, glow_pad_y, p->brow_slant_pct,
-                            is_left[i], eye_color, glow_color, bg_color);
+                            p->bottom_cut_pct, is_left[i], eye_color, glow_color,
+                            bg_color);
         } else {
             int band_h = eh / 5;
             if (band_h < 1) band_h = 1;
