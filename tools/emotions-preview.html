@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>robot_eyes — 28-state emotion preview</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #111; color: #ddd; font: 14px/1.4 -apple-system, "Segoe UI", sans-serif; padding: 16px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #888; margin-bottom: 12px; }
+  .controls { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  .controls label { display: flex; gap: 6px; align-items: center; color: #aaa; }
+  #zoomwrap { display: none; margin-bottom: 20px; }
+  #zoomwrap.show { display: block; }
+  #zoom { border-radius: 16px; width: 480px; max-width: 100%; }
+  #zoomlabel { margin-top: 4px; color: #aaa; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #7a7a7a; margin: 22px 0 8px; }
+  .grid { display: flex; flex-wrap: wrap; gap: 12px; }
+  .cell { background: #1b1b1d; border-radius: 12px; padding: 8px 8px 6px; cursor: pointer; text-align: center; }
+  .cell:hover { background: #26262a; }
+  .cell canvas { width: 160px; border-radius: 8px; display: block; }
+  .cell .name { margin-top: 5px; font-size: 13px; }
+  .cell .tag { color: #4da3ff; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>robot_eyes — 28 emotion states</h1>
+<div class="sub">Port trung thực của <code>components/robot_eyes/robot_eyes.c</code> — dùng để duyệt/tinh chỉnh trước khi nạp board. Click một ô để phóng to.</div>
+
+<div class="controls">
+  <label>Màu mắt <input type="color" id="eyecolor" value="#00e5ff"></label>
+  <label>Panel
+    <select id="preset">
+      <option value="240x216" selected>240×216 (ST7789, trừ status bar)</option>
+      <option value="128x52">128×52 (SSD1306, trừ status bar)</option>
+    </select>
+  </label>
+</div>
+
+<div id="zoomwrap">
+  <canvas id="zoom"></canvas>
+  <div id="zoomlabel"></div>
+</div>
+
+<div id="groups"></div>
+
+<script>
+'use strict';
+// ============================================================
+// KEEP IN SYNC with components/robot_eyes/robot_eyes.c EMOTIONS[]
+// Per-eye: [height,width,corner,yShift,browSlant,bottomCut] (pct)
+// ============================================================
+const M = { NONE: 0, SHAKE: 1, BOUNCE: 2, OSCILLATE: 3 };
+const D = { NONE: 0, SWEAT: 1, TEAR: 2 };
+const DEC = { NONE: 0, MOUTH: 1, ZZZ: 2, WAVES: 3 };
+
+const EMOTIONS = {
+  neutral:     { l: [100,100,100,  0,  0, 0], blink: [3000,150] },
+  happy:       { l: [ 75,105,140, -5,  0,45], blink: [3000,150], decor: DEC.MOUTH },
+  sad:         { l: [ 85, 90, 70, 20,-40, 0], blink: [3500,200] },
+  surprised:   { l: [130,105,100,-15,  0, 0], blink: [3000,150], decor: DEC.WAVES },
+  angry:       { l: [ 55, 95, 25,  0, 45, 0], blink: [3000,150] },
+  sleepy:      { l: [ 30, 90, 50, 25,  0, 0], blink: [3000,300], decor: DEC.ZZZ },
+  confused:    { l: [100,100,100,-15,-30, 0], r: [100,100,100,  0,  0, 0], blink: [3000,150], motion: M.SHAKE, amp: 5, tag: 'shake · asym' },
+  suspicious:  { l: [ 50,100, 35,  6, 25, 0], r: [ 30,100, 45, 10,  0, 0], blink: [4000,200], tag: 'asym' },
+  listening:   { l: [105,100,100,  0,  0, 0], blink: [5000,120], decor: DEC.WAVES, tag: 'state' },
+  pondering:   { l: [ 80, 95,100,  0,  0, 0], blink: [4000,250], tag: 'state' },
+  focused:     { l: [ 45,100, 60,  0,  0, 0], blink: [8000,150] },
+  laughing:    { l: [ 60,105,150, -8,  0,55], blink: [3000,150], motion: M.OSCILLATE, amp: 15, decor: DEC.MOUTH, tag: '40w' },
+  glee:        { l: [ 50,105,160,-10,  0,60], blink: [3000,150], motion: M.BOUNCE, amp: 8, tag: 'bounce' },
+  awe:         { l: [130,100,200, -5,  0, 0], blink: [1600,100] },
+  crying:      { l: [ 80, 88, 70, 24,-45, 0], blink: [4500,250], drop: D.TEAR, tag: 'tear' },
+  furious:     { l: [ 45, 95, 20,  4, 60, 0], blink: [2500,120] },
+  frustrated:  { l: [ 55, 95, 25,  2, 40, 0], blink: [3000,150], motion: M.SHAKE, amp: 6, tag: 'shake' },
+  annoyed:     { l: [ 45, 95, 30,  6, 25, 0], r: [ 60, 95, 30,  0, 15, 0], blink: [3800,200], tag: 'asym' },
+  unimpressed: { l: [ 30,100, 40, 10,  0, 0], r: [ 40,100, 40,  2,  0, 0], blink: [4500,250], tag: 'asym' },
+  worried:     { l: [ 75, 95, 60,  6,-35, 0], blink: [3000,150] },
+  nervous:     { l: [ 70, 95, 55,  6,-35, 0], blink: [2200,120], drop: D.SWEAT, tag: 'sweat' },
+  anxious:     { l: [ 80, 95, 55,  4,-40, 0], blink: [1400,100], drop: D.SWEAT, tag: 'sweat' },
+  scared:      { l: [130,105, 80, -8,  0, 0], blink: [1800,100] },
+  shocked:     { l: [135,108,110,-10,  0, 0], blink: [6000,100] },
+  tired:       { l: [ 35, 92, 45, 18,-20, 0], blink: [3500,300] },
+  bored:       { l: [ 25,100, 40, 12,  0, 0], blink: [7000,400] },
+  skeptical:   { l: [100,100,100, -5,  0, 0], r: [ 35,100, 60,  8,  0, 0], blink: [4000,200], tag: 'asym' },
+  squint:      { l: [ 18,100, 30,  0,  0, 0], blink: [9000,150] },
+};
+
+const GROUPS = [
+  ['1. Neutral & Attention', ['neutral', 'listening', 'pondering', 'focused']],
+  ['2. Positive',            ['happy', 'laughing', 'glee', 'awe']],
+  ['3. Negative',            ['sad', 'crying']],
+  ['4. Angry / Frustration', ['angry', 'furious', 'frustrated', 'annoyed', 'unimpressed']],
+  ['5. Fear & Anxiety',      ['worried', 'nervous', 'anxious', 'scared', 'shocked', 'surprised']],
+  ['6. Tired / Low Energy',  ['sleepy', 'tired', 'bored']],
+  ['7. Suspicion / Judgement', ['skeptical', 'suspicious', 'squint', 'confused']],
+];
+
+const MAX_REACH_PCT = 140;
+const idiv = (a, b) => Math.trunc(a / b);   // C integer division (trunc toward 0)
+
+function isClosed(em, t) {
+  return (t % em.blink[0]) < em.blink[1];
+}
+
+function motionOffsets(em, r, t) {
+  const amp = em.amp || 0;
+  let dx = 0, dy = 0, dh = 0;
+  switch (em.motion || M.NONE) {
+    case M.SHAKE: {
+      let a = idiv(r * amp, 100); if (a < 1) a = 1;
+      dx = (idiv(t, 60) % 2) ? a : -a;
+      break;
+    }
+    case M.BOUNCE: {
+      const ph = t % 600, tri = ph < 300 ? ph : 600 - ph;
+      dy = -idiv(idiv(r * amp, 100) * tri, 300);
+      break;
+    }
+    case M.OSCILLATE: {
+      const ph = t % 250, tri = ph < 125 ? ph : 250 - ph;
+      dh = idiv(2 * amp * tri, 125) - amp;
+      break;
+    }
+  }
+  return { dx, dy, dh };
+}
+
+function dimColor(hex) {   // mirrors dim_rgb565: halve each channel
+  const n = parseInt(hex.slice(1), 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return `rgb(${r >> 1},${g >> 1},${b >> 1})`;
+}
+
+function fillRoundedRect(ctx, x, y, w, h, r, color) {
+  if (w <= 0 || h <= 0) return;
+  r = Math.max(0, Math.min(r, idiv(Math.min(w, h), 2)));
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  ctx.fill();
+}
+
+function fillTriangle(ctx, x0, y0, x1, y1, x2, y2, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.lineTo(x2, y2);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function fillCircle(ctx, cx, cy, r, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function renderEyeBox(ctx, ex, ey, ew, eh, cornerR, gpx, gpy, browSlant, bottomCut,
+                      isLeft, eyeColor, glowColor, bgColor) {
+  const gw = ew + 2 * gpx, gh = eh + 2 * gpy;
+  const gx = ex - gpx, gy = ey - gpy;
+  fillRoundedRect(ctx, gx, gy, gw, gh, cornerR + gpy, glowColor);
+  fillRoundedRect(ctx, ex, ey, ew, eh, cornerR, eyeColor);
+
+  if (bottomCut > 0) {
+    const cutH = idiv(eh * bottomCut, 100);
+    if (cutH > 0) {
+      const cutY = ey + eh - cutH;
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(gx, cutY, gw, (gy + gh) - cutY);
+    }
+  }
+
+  if (browSlant !== 0) {
+    let mag = Math.min(Math.abs(browSlant), 100);
+    const wedgeW = idiv(ew * mag, 100), wedgeH = idiv(eh * mag, 200);
+    if (wedgeW >= 1 && wedgeH >= 1) {
+      const cutLeft = (browSlant > 0) === isLeft;
+      const cx = cutLeft ? ex : ex + ew;
+      const dir = cutLeft ? 1 : -1;
+      fillTriangle(ctx, cx, ey, cx + dir * wedgeW, ey, cx, ey + wedgeH, bgColor);
+    }
+  }
+}
+
+function renderDrop(ctx, drop, ex, ey, ew, eh, r, bandBottom, t, color) {
+  let dr = idiv(r, 8); if (dr < 1) dr = 1;
+  let cx, cy;
+  if (drop === D.SWEAT) {
+    if ((t % 800) >= 500) return;
+    cx = ex + ew; cy = ey - dr;
+  } else if (drop === D.TEAR) {
+    const startY = ey + eh + 2 * dr;
+    let endY = bandBottom - dr - 1;
+    if (endY < startY) endY = startY;
+    cy = startY + idiv((endY - startY) * (t % 1200), 1200);
+    cx = ex + idiv(3 * ew, 4);
+  } else return;
+  fillCircle(ctx, cx, cy, dr, color);
+  fillTriangle(ctx, cx, cy - 3 * dr, cx - dr, cy, cx + dr, cy, color);
+}
+
+// Decor bands & renderers — same percentages as robot_eyes.c
+function renderDecor(ctx, decor, W, H, t, fg) {
+  const r = idiv(H, 4), cy = idiv(H, 2);
+  if (decor === DEC.MOUTH) {
+    const top = cy + idiv(r * 145, 100), bandH = idiv(r * 50, 100);
+    const mid = top + idiv(bandH, 2);
+    const open = (t % 300) < 150;
+    const mw = idiv(W, 3);
+    let mh = open ? idiv(40 * r, 100) : idiv(12 * r, 100);
+    if (mh < 1) mh = 1;
+    fillRoundedRect(ctx, idiv(W, 2) - idiv(mw, 2), mid - idiv(mh, 2), mw, mh, idiv(mh, 2), fg);
+  } else if (decor === DEC.ZZZ) {
+    const bottom = cy + idiv(r * -145, 100);
+    const visible = idiv(t, 500) % 4;
+    const gs = Math.max(8, idiv(H, 14));   // glyph size scales with panel
+    ctx.fillStyle = fg;
+    ctx.font = `bold ${gs}px monospace`;
+    ctx.textBaseline = 'bottom';
+    for (let i = 0; i < Math.min(visible, 3); i++) {
+      ctx.fillText('Z', idiv(W * 3, 5) + i * (gs + 2), bottom - i * (gs - 2));
+    }
+  } else if (decor === DEC.WAVES) {
+    const top = cy + idiv(r * 145, 100), bandH = idiv(r * 50, 100);
+    const bottom = top + bandH;
+    const barW = Math.max(1, idiv(W, 10));
+    const totalW = barW * 9, startX = idiv(W, 2) - idiv(totalW, 2);
+    const minH = Math.max(1, idiv(bandH, 6));
+    for (let i = 0; i < 5; i++) {
+      const ph = (t + i * 160) % 800;
+      const tri = ph < 400 ? ph : 800 - ph;
+      const bh = Math.max(1, minH + idiv((bandH - minH) * tri, 400));
+      ctx.fillStyle = fg;
+      ctx.fillRect(startX + i * 2 * barW, bottom - bh, barW, bh);
+    }
+  }
+}
+
+function renderEyes(ctx, W, H, t, name, eyeColor, bgColor) {
+  const em = EMOTIONS[name];
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, W, H);
+
+  const r = idiv(H, 4), cy0 = idiv(H, 2);
+  const slotHalfW = idiv(W, 4);
+  const marginX = idiv(slotHalfW, 6);
+  const maxHalfW = slotHalfW - marginX;
+  const gpx = idiv(maxHalfW, 6);
+  const baseEyeW = 2 * (maxHalfW - gpx);
+  const baseEyeH = idiv(8 * r, 5);
+  const gpy = idiv(r, 5);
+  const glowColor = dimColor(eyeColor);
+
+  const { dx, dy, dh } = motionOffsets(em, r, t);
+  const closed = isClosed(em, t);
+  const sides = [em.l, em.r || em.l];
+  const cxs = [idiv(W, 4), idiv(3 * W, 4)];
+  let right = null;
+
+  for (let i = 0; i < 2; i++) {
+    const [hPct, wPct, cPct, yPct, brow, cut] = sides[i];
+    const ew = idiv(baseEyeW * wPct, 100);
+    const eh = idiv(baseEyeH * (hPct + dh), 100);
+    const cornerR = idiv(idiv(ew * 2, 10) * cPct, 100);
+    const cy = cy0 + idiv(r * yPct, 100) + dy;
+    const ex = cxs[i] + dx - idiv(ew, 2), ey = cy - idiv(eh, 2);
+    if (i === 1) right = { ex, ey, ew, eh };
+
+    if (!closed) {
+      renderEyeBox(ctx, ex, ey, ew, eh, cornerR, gpx, gpy, brow, cut, i === 0,
+                   eyeColor, glowColor, bgColor);
+    } else {
+      const bandH = Math.max(1, idiv(eh, 5));
+      ctx.fillStyle = eyeColor;
+      ctx.fillRect(ex, cy - idiv(bandH, 2), ew, bandH);
+    }
+  }
+
+  if (em.drop) {
+    const bandBottom = cy0 + idiv(r * MAX_REACH_PCT, 100);
+    renderDrop(ctx, em.drop, right.ex, right.ey, right.ew, right.eh, r, bandBottom, t, eyeColor);
+  }
+  if (em.decor) renderDecor(ctx, em.decor, W, H, t, eyeColor);
+}
+
+// ---------- page setup ----------
+let panelW = 240, panelH = 216;
+const cells = [];
+let zoomed = null;
+
+const groupsEl = document.getElementById('groups');
+for (const [title, names] of GROUPS) {
+  const h = document.createElement('h2');
+  h.textContent = title;
+  groupsEl.appendChild(h);
+  const grid = document.createElement('div');
+  grid.className = 'grid';
+  groupsEl.appendChild(grid);
+  for (const name of names) {
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    const cv = document.createElement('canvas');
+    const label = document.createElement('div');
+    label.className = 'name';
+    label.innerHTML = name + (EMOTIONS[name].tag ? ` <span class="tag">· ${EMOTIONS[name].tag}</span>` : '');
+    cell.appendChild(cv); cell.appendChild(label);
+    cell.onclick = () => {
+      zoomed = name;
+      document.getElementById('zoomwrap').classList.add('show');
+      document.getElementById('zoomlabel').textContent = 'Zoom: ' + name + ' — click ô khác để đổi';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    grid.appendChild(cell);
+    cells.push({ name, cv });
+  }
+}
+
+function applyPreset() {
+  [panelW, panelH] = document.getElementById('preset').value.split('x').map(Number);
+  for (const { cv } of cells) { cv.width = panelW; cv.height = panelH; }
+  const z = document.getElementById('zoom');
+  z.width = panelW; z.height = panelH;
+}
+document.getElementById('preset').onchange = applyPreset;
+applyPreset();
+
+const t0 = performance.now();
+function frame() {
+  const t = Math.floor(performance.now() - t0);
+  const eyeColor = document.getElementById('eyecolor').value;
+  for (const { name, cv } of cells) {
+    renderEyes(cv.getContext('2d'), panelW, panelH, t, name, eyeColor, '#000');
+  }
+  if (zoomed) {
+    renderEyes(document.getElementById('zoom').getContext('2d'), panelW, panelH, t, zoomed, eyeColor, '#000');
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
