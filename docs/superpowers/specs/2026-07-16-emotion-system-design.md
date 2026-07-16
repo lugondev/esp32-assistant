@@ -193,7 +193,26 @@ SWEAT/TEAR are **not** decor — they are drawn in-band.
    halves; mirrored emotions stay mirror-symmetric (drop/wedge aside).
 6. New decor mapping (LISTENING→WAVES) plus the old mapping unchanged.
 
-## 9. What does NOT change
+## 9. Addendum (2026-07-16, post-merge): configurable glow border
+
+User request after the initial merge: shrink the glow "border" behind the
+eyes and make it configurable, with 0 meaning no border.
+
+- New static config in `robot_eyes.h`: `robot_eyes_set_glow_pct(int)` /
+  `robot_eyes_glow_pct(void)`, default `ROBOT_EYES_GLOW_PCT_DEFAULT = 10`
+  (was effectively ~17–20% before), clamped to
+  `[0, ROBOT_EYES_GLOW_PCT_MAX = 20]` — the max equals exactly the 0.2r of
+  vertical headroom the dirty-band budget reserves for the glow, so any
+  allowed setting keeps every emotion inside the band.
+- `0` disables the halo entirely (the glow fill is skipped, and the eyes
+  widen slightly, reclaiming the halo's width budget).
+- A non-zero setting is clamped to at least 1 px of padding on tiny panels
+  where the percentage rounds to 0 (e.g. SSD1306-scale canvases).
+- This is static configuration, not animation state — rendering stays a pure
+  function of (config, emotion, now_ms).
+- The preview page gains a matching "Glow (border)" slider (0–20, default 10).
+
+## 10. What does NOT change
 
 - The signatures of `robot_eyes_render`, `robot_eyes_dirty_band`, and the
   entire decor API.
