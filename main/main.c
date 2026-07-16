@@ -87,9 +87,16 @@ static volatile uint32_t s_last_activity_s = 0;
 // chime only on the first welcome
 static volatile bool s_welcomed_once = false;
 
-// jitter buffer: queue of heap-allocated Opus packets
-typedef struct { uint8_t data[OPUS_MAX_PACKET]; int len; } pkt_t;
-static QueueHandle_t s_pktq;   // holds pkt_t* ; depth ~ 150 ms / 60 ms ≈ a few frames + slack
+// One Opus packet, queued BY VALUE (xQueueSend copies it): the previous
+// heap-pointer design malloc'd/free'd ~1.5KB on every 60ms frame in both
+// directions, churning the internal heap right next to the WiFi stack's own
+// allocations — a slow-fragmentation risk with zero upside. Both queues'
+// storage lives in PSRAM (xQueueCreateStatic in app_main): 2 queues * 16 *
+// ~1.5KB ≈ 48KB, which would be far too much internal SRAM to pin down.
+// Shared by the downlink jitter buffer and the mic->uplink hand-off.
+typedef struct { int len; uint8_t data[OPUS_MAX_PACKET]; } pkt_t;
+#define PKT_QUEUE_DEPTH 16
+static QueueHandle_t s_pktq;   // jitter buffer; depth ~16*60ms ceiling
 
 // Prime the jitter buffer before starting playback so a reply doesn't underrun
 // between sentence chunks. The gateway bursts each chunk's Opus frames then pauses
@@ -542,7 +549,7 @@ static void on_event(const lugo_event_t *ev) {
         s_turn_ending = false;
         s_state = APP_LISTENING;
         ws_client_set_reconnect(false);
-        { pkt_t *p; while (xQueueReceive(s_pktq, &p, 0) == pdTRUE) free(p); }  // flush
+        xQueueReset(s_pktq);   // flush any buffered downlink audio
         audio_spk_reset();
         opus_codec_reset();
         send_idle_status("Idle");
@@ -581,46 +588,42 @@ static void on_audio(const uint8_t *data, int len) {
     // put on the wire before it received our abort, so the bot doesn't briefly
     // resume playing after the "stop."
     if (s_state != APP_SPEAKING) return;
-    pkt_t *p = malloc(sizeof(pkt_t));
-    if (!p) return;
-    memcpy(p->data, data, len); p->len = len;
-    if (xQueueSend(s_pktq, &p, 0) != pdTRUE) free(p);   // drop on overflow
+    // Staged in a static (single writer: the ws task) rather than 1.5KB of
+    // the ws task's 8KB stack; xQueueSend copies it out. Full queue = drop.
+    static pkt_t p;
+    memcpy(p.data, data, len); p.len = len;
+    xQueueSend(s_pktq, &p, 0);
 }
 
 // Mirrors xiaozhi-esp32's architecture: the audio-capture task only encodes
 // and queues; a separate uplink_task owns the ws_client_send_audio() call.
 // (opus_encode is the stack-heavy part — see mic_task's stack size below.)
-typedef struct { uint8_t data[OPUS_MAX_PACKET]; int len; } uplink_pkt_t;
 static QueueHandle_t s_uplinkq;
 
 static void mic_task(void *arg) {
     (void)arg;
     int16_t pcm[OPUS_UP_SAMPLES];
+    static pkt_t p;   // single mic_task instance; xQueueSend copies it out
     for (;;) {
         int got = audio_mic_read(pcm, OPUS_UP_SAMPLES);   // keeps I2S draining always
         if (got != OPUS_UP_SAMPLES) { vTaskDelay(pdMS_TO_TICKS(10)); continue; }
         // Only stream when the user has activated the conversation (Wake button),
         // the session is ready, and we're not playing the bot (half-duplex).
         if (!s_active || s_state != APP_LISTENING || s_voice_busy || !ws_client_connected()) continue;
-        uplink_pkt_t *p = malloc(sizeof(uplink_pkt_t));
-        if (!p) continue;
-        int n = opus_codec_encode(pcm, p->data, sizeof p->data);
+        int n = opus_codec_encode(pcm, p.data, sizeof p.data);
         if (n > 0) {
-            p->len = n;
-            if (xQueueSend(s_uplinkq, &p, 0) != pdTRUE) free(p);   // drop on overflow
-        } else {
-            free(p);
+            p.len = n;
+            xQueueSend(s_uplinkq, &p, 0);   // drop on overflow
         }
     }
 }
 
 static void uplink_task(void *arg) {
     (void)arg;
-    uplink_pkt_t *p;
+    static pkt_t p;   // single uplink_task instance
     for (;;) {
         if (xQueueReceive(s_uplinkq, &p, pdMS_TO_TICKS(100)) != pdTRUE) continue;
-        ws_client_send_audio(p->data, p->len);
-        free(p);
+        ws_client_send_audio(p.data, p.len);
     }
 }
 
@@ -629,7 +632,7 @@ static void spk_task(void *arg) {
     int16_t pcm[OPUS_DOWN_SAMPLES_MAX];  // must fit the largest (120ms) Opus frame
                                          // the gateway may send, not just 60ms —
                                          // undersizing this stack-smashed spk_task.
-    pkt_t *p;
+    static pkt_t p;   // single spk_task instance; xQueueReceive copies into it
     bool priming = true;   // build slack before the first frame of each burst
     for (;;) {
         if (s_barge_in) {
@@ -638,7 +641,7 @@ static void spk_task(void *arg) {
             // committed DMA, and reset the decoder so the next reply is clean.
             // The button task already set LISTENING + showed "Listening".
             s_barge_in = false;
-            { pkt_t *bp; while (xQueueReceive(s_pktq, &bp, 0) == pdTRUE) free(bp); }
+            xQueueReset(s_pktq);
             audio_spk_reset();
             opus_codec_reset();
             priming = true;
@@ -669,8 +672,7 @@ static void spk_task(void *arg) {
             }
             continue;
         }
-        int n = opus_codec_decode(p->data, p->len, pcm);
-        free(p);
+        int n = opus_codec_decode(p.data, p.len, pcm);
         if (n > 0) audio_spk_write(pcm, n);
     }
 }
@@ -772,8 +774,14 @@ void app_main(void) {
     display_show("WiFi OK", "Starting…");
     ESP_ERROR_CHECK(opus_codec_init());
 
-    s_pktq = xQueueCreate(16, sizeof(pkt_t *));   // ~16*60ms buffer ceiling
-    s_uplinkq = xQueueCreate(16, sizeof(uplink_pkt_t *));
+    // By-value packet queues with PSRAM item storage (see pkt_t): only the
+    // small StaticQueue_t bookkeeping stays in internal RAM.
+    static StaticQueue_t pktq_cb, uplinkq_cb;
+    uint8_t *pktq_stor    = heap_caps_malloc(PKT_QUEUE_DEPTH * sizeof(pkt_t), MALLOC_CAP_SPIRAM);
+    uint8_t *uplinkq_stor = heap_caps_malloc(PKT_QUEUE_DEPTH * sizeof(pkt_t), MALLOC_CAP_SPIRAM);
+    ESP_ERROR_CHECK(pktq_stor && uplinkq_stor ? ESP_OK : ESP_ERR_NO_MEM);
+    s_pktq    = xQueueCreateStatic(PKT_QUEUE_DEPTH, sizeof(pkt_t), pktq_stor, &pktq_cb);
+    s_uplinkq = xQueueCreateStatic(PKT_QUEUE_DEPTH, sizeof(pkt_t), uplinkq_stor, &uplinkq_cb);
     s_status_q = xQueueCreate(4, sizeof(status_msg_t));
     xTaskCreatePinnedToCore(status_task, "status", 8192, NULL, 4, NULL, APP_CPU_AUDIO);
     const esp_timer_create_args_t vol_timer_args = {
