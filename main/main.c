@@ -148,12 +148,13 @@ static esp_timer_handle_t s_volume_revert_timer;
 // the queue's normal portMAX_DELAY responsiveness to real status messages.
 #define EYES_FRAME_MS 120
 
-// Shared HUD palette: white foreground on dark navy (not pure black) — one
-// continuous background across the status bar and eyes so there's no
-// visible seam between the two regions.
+// Shared HUD palette: one continuous background across the status bar and
+// eyes so there's no visible seam between the two regions. Status bar text
+// stays white; the eyes render green on pure black (borderless — glow is
+// set to 0 at boot in app_main).
 #define HUD_FG 0xFFFF
-#define HUD_BG 0x1085
-#define EYES_COLOR HUD_FG
+#define HUD_BG 0x0000
+#define EYES_COLOR 0x07E0   // pure green in RGB565
 #define EYES_BG    HUD_BG
 
 // Status bar strip height in pixels (WiFi bars + centered text + battery).
@@ -681,6 +682,7 @@ static void show_boot_color_bars(void) {
 
 void app_main(void) {
     ESP_LOGI(TAG, "esp32-assistant booting");
+    robot_eyes_set_glow_pct(0);   // borderless eyes — no glow halo
     ESP_ERROR_CHECK(board_detect_and_select());
     ESP_ERROR_CHECK(display_init());
     show_boot_color_bars();
