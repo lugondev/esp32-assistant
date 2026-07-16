@@ -3,8 +3,9 @@
 #include <stdbool.h>
 
 // Stateless "robot eyes" blink schedule + renderer. No hardware access —
-// host-testable. Time is the only input: given the same now_ms, behavior
-// is always identical (no RNG, no mutable state to carry between calls).
+// host-testable. Time is the only per-frame input: given the same now_ms
+// (and the same static configuration below), behavior is always identical
+// (no RNG, no animation state carried between calls).
 
 // NEUTRAL's blink schedule. Every emotion has its own interval/duration in
 // robot_eyes.c's EMOTIONS table (a bored eye blinks slowly, an anxious one
@@ -80,6 +81,19 @@ typedef enum {
 // Per-emotion blink schedule (interval/duration from robot_eyes.c's
 // EMOTIONS table). robot_eyes_is_closed(t) is this with NEUTRAL.
 bool robot_eyes_is_closed_for(robot_emotion_t emotion, uint32_t now_ms);
+
+// Glow "border" halo drawn behind each eye, sized as a % of r (the eye
+// radius unit, panel_h/4) vertically and of the eye's width budget
+// horizontally. Static configuration, not animation state — render output
+// stays a pure function of (config, emotion, now_ms). 0 disables the halo
+// entirely (eyes also widen slightly, reclaiming the halo's width budget).
+// Values outside [0, ROBOT_EYES_GLOW_PCT_MAX] are clamped: the dirty-band
+// budget (ROBOT_EYES_MAX_REACH_PCT in robot_eyes.c) only reserves 0.2r of
+// vertical headroom for the glow.
+#define ROBOT_EYES_GLOW_PCT_DEFAULT 10
+#define ROBOT_EYES_GLOW_PCT_MAX     20
+void robot_eyes_set_glow_pct(int pct);
+int  robot_eyes_glow_pct(void);
 
 // Renders two eyes into buf, a buf_w-wide, buf_rows-tall RGB565 crop of a
 // buf_w x panel_h panel, where buf row 0 corresponds to panel row y_offset

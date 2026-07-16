@@ -29,6 +29,8 @@
 
 <div class="controls">
   <label>Eye color <input type="color" id="eyecolor" value="#00e5ff"></label>
+  <label>Glow (border) <input type="range" id="glow" min="0" max="20" value="10">
+    <span id="glowval">10</span>%  <span style="color:#666">(0 = no border)</span></label>
   <label>Panel
     <select id="preset">
       <option value="240x216" selected>240×216 (ST7789, minus status bar)</option>
@@ -159,7 +161,8 @@ function renderEyeBox(ctx, ex, ey, ew, eh, cornerR, gpx, gpy, browSlant, bottomC
                       isLeft, eyeColor, glowColor, bgColor) {
   const gw = ew + 2 * gpx, gh = eh + 2 * gpy;
   const gx = ex - gpx, gy = ey - gpy;
-  fillRoundedRect(ctx, gx, gy, gw, gh, cornerR + gpy, glowColor);
+  if (gpx > 0 || gpy > 0)   // glow 0 → no border halo at all
+    fillRoundedRect(ctx, gx, gy, gw, gh, cornerR + gpy, glowColor);
   fillRoundedRect(ctx, ex, ey, ew, eh, cornerR, eyeColor);
 
   if (bottomCut > 0) {
@@ -237,7 +240,7 @@ function renderDecor(ctx, decor, W, H, t, fg) {
   }
 }
 
-function renderEyes(ctx, W, H, t, name, eyeColor, bgColor) {
+function renderEyes(ctx, W, H, t, name, eyeColor, bgColor, glowPct) {
   const em = EMOTIONS[name];
   ctx.fillStyle = bgColor;
   ctx.fillRect(0, 0, W, H);
@@ -246,10 +249,13 @@ function renderEyes(ctx, W, H, t, name, eyeColor, bgColor) {
   const slotHalfW = idiv(W, 4);
   const marginX = idiv(slotHalfW, 6);
   const maxHalfW = slotHalfW - marginX;
-  const gpx = idiv(maxHalfW, 6);
+  // Same clamps as robot_eyes.c: non-zero glow stays >= 1px on tiny panels.
+  let gpx = idiv(maxHalfW * glowPct, 100);
+  if (glowPct > 0 && gpx < 1) gpx = 1;
   const baseEyeW = 2 * (maxHalfW - gpx);
   const baseEyeH = idiv(8 * r, 5);
-  const gpy = idiv(r, 5);
+  let gpy = idiv(r * glowPct, 100);
+  if (glowPct > 0 && gpy < 1) gpy = 1;
   const glowColor = dimColor(eyeColor);
 
   const { dx, dy, dh } = motionOffsets(em, r, t);
@@ -329,11 +335,13 @@ const t0 = performance.now();
 function frame() {
   const t = Math.floor(performance.now() - t0);
   const eyeColor = document.getElementById('eyecolor').value;
+  const glowPct = Number(document.getElementById('glow').value);
+  document.getElementById('glowval').textContent = glowPct;
   for (const { name, cv } of cells) {
-    renderEyes(cv.getContext('2d'), panelW, panelH, t, name, eyeColor, '#000');
+    renderEyes(cv.getContext('2d'), panelW, panelH, t, name, eyeColor, '#000', glowPct);
   }
   if (zoomed) {
-    renderEyes(document.getElementById('zoom').getContext('2d'), panelW, panelH, t, zoomed, eyeColor, '#000');
+    renderEyes(document.getElementById('zoom').getContext('2d'), panelW, panelH, t, zoomed, eyeColor, '#000', glowPct);
   }
   requestAnimationFrame(frame);
 }

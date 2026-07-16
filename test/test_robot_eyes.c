@@ -469,6 +469,28 @@ static void test_asym_emotions_differ_between_eyes(void) {
     }
 }
 
+static void test_glow_pct_default_and_clamp(void) {
+    CHECK(robot_eyes_glow_pct() == ROBOT_EYES_GLOW_PCT_DEFAULT);
+    robot_eyes_set_glow_pct(50);
+    CHECK(robot_eyes_glow_pct() == ROBOT_EYES_GLOW_PCT_MAX);   // clamped: band budget
+    robot_eyes_set_glow_pct(-3);
+    CHECK(robot_eyes_glow_pct() == 0);
+    robot_eyes_set_glow_pct(ROBOT_EYES_GLOW_PCT_DEFAULT);
+}
+
+static void test_glow_zero_disables_the_halo(void) {
+    // With glow 0 there must be NO third tone anywhere — only pure EYE and
+    // BG pixels (the halo is the only source of a dimmed tone).
+    robot_eyes_set_glow_pct(0);
+    dclear();
+    robot_eyes_render(dbuf, DW, DH, DH, 0, 500, ROBOT_EMOTION_NEUTRAL, EYE, BG);
+    bool third_tone = false;
+    for (int i = 0; i < DW * DH; i++)
+        if (dbuf[i] != EYE && dbuf[i] != BG) third_tone = true;
+    CHECK(!third_tone);
+    robot_eyes_set_glow_pct(ROBOT_EYES_GLOW_PCT_DEFAULT);
+}
+
 int main(void) {
     test_closed_only_during_blink_window();
     test_blink_recurs_every_interval();
@@ -504,6 +526,8 @@ int main(void) {
     test_motion_emotions_animate_while_open();
     test_sweat_drop_pulses();
     test_tear_slides_down_over_time();
+    test_glow_pct_default_and_clamp();
+    test_glow_zero_disables_the_halo();
     if (failures) { printf("%d FAILURES\n", failures); return 1; }
     printf("ALL PASS\n");
     return 0;

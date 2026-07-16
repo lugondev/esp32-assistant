@@ -2,10 +2,22 @@
 #include "gfx.h"
 #include "display_font.h"
 
+// Static configuration (see robot_eyes.h): halo size, clamped so the
+// dirty-band budget below always holds.
+static int s_glow_pct = ROBOT_EYES_GLOW_PCT_DEFAULT;
+
+void robot_eyes_set_glow_pct(int pct) {
+    if (pct < 0) pct = 0;
+    if (pct > ROBOT_EYES_GLOW_PCT_MAX) pct = ROBOT_EYES_GLOW_PCT_MAX;
+    s_glow_pct = pct;
+}
+
+int robot_eyes_glow_pct(void) { return s_glow_pct; }
+
 // Worst-case vertical reach across every emotion in EMOTIONS below, not
 // just NEUTRAL — SURPRISED is the driver: height_pct=130 (half-height
-// 1.3*0.8r=1.04r) plus |y_shift_pct|=15 (0.15r) plus glow_pad_y (0.2r) =
-// 1.39r. 140 gives a small safety margin. Recompute this if EMOTIONS ever
+// 1.3*0.8r=1.04r) plus |y_shift_pct|=15 (0.15r) plus the max glow pad
+// (ROBOT_EYES_GLOW_PCT_MAX = 20 → 0.2r) = 1.39r. 140 gives a small safety margin. Recompute this if EMOTIONS ever
 // gains a more extreme height_pct/y_shift_pct combination — an emotion
 // exceeding this reach will get its top/bottom clipped by the crop this
 // drives, exactly the bug this constant was added to fix.
@@ -152,7 +164,10 @@ static void render_eye_box(uint16_t *buf, int buf_w, int buf_rows,
     int gw = ew + 2 * glow_pad_x, gh = eh + 2 * glow_pad_y;
     int gr = corner_r + glow_pad_y;
     int gx = ex - glow_pad_x, gy = ey - glow_pad_y;
-    gfx_fill_rounded_rect(buf, buf_w, buf_rows, gx, gy, gw, gh, gr, glow_color);
+    // Glow pct 0 zeroes both pads — skip the halo entirely rather than
+    // drawing a dim rect the bright eye would fully overpaint anyway.
+    if (glow_pad_x > 0 || glow_pad_y > 0)
+        gfx_fill_rounded_rect(buf, buf_w, buf_rows, gx, gy, gw, gh, gr, glow_color);
     gfx_fill_rounded_rect(buf, buf_w, buf_rows, ex, ey, ew, eh, corner_r, eye_color);
 
     if (bottom_cut_pct > 0) {
@@ -271,16 +286,21 @@ void robot_eyes_render(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
     int slot_half_w = buf_w / 4;
     int margin_x    = slot_half_w / 6;
     int max_half_w  = slot_half_w - margin_x;
-    int glow_pad_x  = max_half_w / 6;
+    // A non-zero glow setting must stay visible even on tiny panels where
+    // the percentage rounds to 0 px (e.g. r=5 on a 128x64 test canvas) —
+    // clamp both pads to at least 1 px. Only pct == 0 disables the halo.
+    int glow_pad_x  = (max_half_w * s_glow_pct) / 100;
+    if (s_glow_pct > 0 && glow_pad_x < 1) glow_pad_x = 1;
     int base_eye_half_w = max_half_w - glow_pad_x;
     int base_eye_w = 2 * base_eye_half_w;
 
     int base_eye_h = (8 * r) / 5;   // 1.6r
-    // glow_pad_y unchanged from before so eye_h/2 + glow_pad_y == r exactly
-    // at NEUTRAL scale, keeping the vertical glow within
-    // robot_eyes_dirty_band's [-r,+r) range even at emotions that enlarge
-    // height_pct up to 130 (SURPRISED) — checked against the table above.
-    int glow_pad_y = r / 5;
+    // Vertical glow pad is configured as a % of r, clamped to
+    // ROBOT_EYES_GLOW_PCT_MAX (0.2r) — exactly the glow headroom the
+    // dirty-band budget (ROBOT_EYES_MAX_REACH_PCT) reserves, so any
+    // allowed setting keeps every emotion inside the band.
+    int glow_pad_y = (r * s_glow_pct) / 100;
+    if (s_glow_pct > 0 && glow_pad_y < 1) glow_pad_y = 1;
     uint16_t glow_color = dim_rgb565(eye_color);
 
     const emotion_params_t *em = &EMOTIONS[emotion];
