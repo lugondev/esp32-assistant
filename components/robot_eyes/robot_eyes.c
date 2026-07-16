@@ -14,6 +14,23 @@ void robot_eyes_set_glow_pct(int pct) {
 
 int robot_eyes_glow_pct(void) { return s_glow_pct; }
 
+// THE single definition of r, the unit every vertical dimension here is
+// expressed in. render, dirty_band, and decor_band MUST all go through
+// this: the bands are sized as multiples of r to promise they cover every
+// pixel render can touch, so an r that differs between them turns that
+// promise into clipped eyes or a wasted SPI flush.
+//
+// The 4 is load-bearing and NOT a free tuning knob — it makes the panel
+// exactly 4r tall, which is the entire vertical budget: the eyes reach
+// +-1.4r (ROBOT_EYES_MAX_REACH_PCT) and the decor band below claims 0.6r,
+// summing to precisely the 2r each side of cy that a 4r panel has. Raising
+// r to grow the eyes overflows the decor off the panel bottom (a bug this
+// code has already shipped once — see robot_eyes_decor_band's comment).
+// Growing the eyes needs the layout budget reworked, not this divisor.
+static int eye_radius(int panel_h) {
+    return panel_h / 4;
+}
+
 // Worst-case vertical reach across every emotion in EMOTIONS below, not
 // just NEUTRAL — SURPRISED is the driver: height_pct=130 (half-height
 // 1.3*0.8r=1.04r) plus |y_shift_pct|=15 (0.15r) plus the max glow pad
@@ -24,7 +41,7 @@ int robot_eyes_glow_pct(void) { return s_glow_pct; }
 #define ROBOT_EYES_MAX_REACH_PCT 140
 
 void robot_eyes_dirty_band(int panel_h, int *y, int *height) {
-    int r  = panel_h / 4;
+    int r  = eye_radius(panel_h);
     int cy = panel_h / 2;
     int half = (r * ROBOT_EYES_MAX_REACH_PCT) / 100;
     *y = cy - half;
@@ -314,7 +331,7 @@ void robot_eyes_render(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
     if ((unsigned)emotion >= ROBOT_EMOTION_COUNT) emotion = ROBOT_EMOTION_NEUTRAL;
     gfx_fill_rect(buf, buf_w, buf_rows, 0, 0, buf_w, buf_rows, bg_color);
 
-    int r  = panel_h / 4;
+    int r  = eye_radius(panel_h);
     int cy0 = panel_h / 2 - y_offset;   // panel-space center, translated to buf-local rows
     int left_cx  = buf_w / 4;
     int right_cx = 3 * buf_w / 4;
@@ -431,7 +448,7 @@ robot_decor_t robot_eyes_decor_for(robot_emotion_t emotion) {
 #define ROBOT_WAVES_HEIGHT_PCT  50
 
 void robot_eyes_decor_band(int panel_h, robot_decor_t decor, int *y, int *height) {
-    int r = panel_h / 4, cy = panel_h / 2;
+    int r = eye_radius(panel_h), cy = panel_h / 2;
     switch (decor) {
     case ROBOT_DECOR_MOUTH:
         *y = cy + (r * ROBOT_MOUTH_TOP_PCT) / 100;
@@ -455,7 +472,7 @@ void robot_eyes_decor_band(int panel_h, robot_decor_t decor, int *y, int *height
 static void render_mouth(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
                           int y_offset, uint32_t now_ms, uint16_t fg, uint16_t bg) {
     gfx_fill_rect(buf, buf_w, buf_rows, 0, 0, buf_w, buf_rows, bg);
-    int r = panel_h / 4;
+    int r = eye_radius(panel_h);
     int band_top, band_h;
     robot_eyes_decor_band(panel_h, ROBOT_DECOR_MOUTH, &band_top, &band_h);
     int cy = band_top + band_h / 2 - y_offset;   // vertical center of the mouth band
