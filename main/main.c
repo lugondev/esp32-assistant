@@ -324,6 +324,19 @@ static void send_idle_status(const char *line1) {
     xQueueSend(s_status_q, &m, 0);
 }
 
+// Common "now listening" HUD update (SURPRISED eyes + "Speak now"), shared by
+// every transition that reopens the mic: wake, barge-in, a text-only TTS_STOP,
+// the post-drain hand-off in spk_task, and the volume-overlay revert. Same
+// dedup rationale as send_idle_status above — a hand-rolled copy of this
+// block existed at all five sites and only needed to drift once to bug out.
+static void send_listening_status(void) {
+    status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true,
+                        .emotion = ROBOT_EMOTION_SURPRISED };
+    strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
+    strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
+    xQueueSend(s_status_q, &m, 0);
+}
+
 // Common "go idle" transition: stop auto-reconnect, mute the mic, show the
 // idle screen. Shared by the Wake button (toggling off) and the MCP
 // self.device.idle tool (registered via mcp_tools_set_idle_hook below) so a
@@ -362,11 +375,7 @@ static void volume_revert_cb(void *arg) {
         strncpy(m.line1, "Speaking", sizeof(m.line1) - 1);
         xQueueSend(s_status_q, &m, 0);
     } else if (s_active) {
-        status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true,
-                            .emotion = ROBOT_EMOTION_SURPRISED };
-        strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
-        strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
-        xQueueSend(s_status_q, &m, 0);
+        send_listening_status();
     } else {
         send_idle_status("Idle");
     }
@@ -390,11 +399,7 @@ static void on_button(button_id_t id) {
             s_barge_in = true;   // spk_task flushes the queue + resets I2S/opus
             s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
             ws_client_send_abort("user");
-            status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true,
-                                .emotion = ROBOT_EMOTION_SURPRISED };
-            strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
-            strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
-            xQueueSend(s_status_q, &m, 0);
+            send_listening_status();
             break;
         }
         // Not speaking: toggle idle/listening. Waking re-enables the link (it may
@@ -405,11 +410,7 @@ static void on_button(button_id_t id) {
             s_active = true;
             ws_client_set_reconnect(true);
             s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
-            status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true,
-                                .emotion = ROBOT_EMOTION_SURPRISED };
-            strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
-            strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
-            xQueueSend(s_status_q, &m, 0);
+            send_listening_status();
         }
         break;
     }
@@ -486,13 +487,7 @@ static void on_event(const lugo_event_t *ev) {
             s_turn_ending = true;  // spk_task drains, then flips to LISTENING + shows it
         } else {
             s_state = APP_LISTENING;
-            if (s_active) {
-                status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true,
-                                    .emotion = ROBOT_EMOTION_SURPRISED };
-                strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
-                strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
-                xQueueSend(s_status_q, &m, 0);
-            }
+            if (s_active) send_listening_status();
         }
         break;
     case LUGO_EV_GOODBYE: {
@@ -626,13 +621,7 @@ static void spk_task(void *arg) {
                 vTaskDelay(pdMS_TO_TICKS(SPK_TAIL_GUARD_MS));
                 s_turn_ending = false;
                 s_state = APP_LISTENING;
-                if (s_active) {
-                    status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true,
-                                        .emotion = ROBOT_EMOTION_SURPRISED };
-                    strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
-                    strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
-                    xQueueSend(s_status_q, &m, 0);
-                }
+                if (s_active) send_listening_status();
             }
             continue;
         }
@@ -660,6 +649,13 @@ static void idle_watchdog_task(void *arg) {
     }
 }
 
+// Bool Kconfig options are undefined (not 0) when unset — same fallback
+// pattern as CONFIG_AA_SERVER_SECURE above.
+#ifndef CONFIG_AA_BOOT_COLOR_BARS
+#define CONFIG_AA_BOOT_COLOR_BARS 0
+#endif
+
+#if CONFIG_AA_BOOT_COLOR_BARS
 // One-time color-pipeline smoke test: 5 real color bars (not the pure
 // white/black the eyes animation ever sends — a wrong RGB565 channel/bit
 // order would be invisible with white/black alone, but not with these).
@@ -695,14 +691,17 @@ static void show_boot_color_bars(void) {
     }
     heap_caps_free(buf);
 }
+#endif  // CONFIG_AA_BOOT_COLOR_BARS
 
 void app_main(void) {
     ESP_LOGI(TAG, "esp32-assistant booting");
     robot_eyes_set_glow_pct(0);   // borderless eyes — no glow halo
     ESP_ERROR_CHECK(board_detect_and_select());
     ESP_ERROR_CHECK(display_init());
+#if CONFIG_AA_BOOT_COLOR_BARS
     show_boot_color_bars();
     vTaskDelay(pdMS_TO_TICKS(2000));  // hold the bars long enough to actually see them
+#endif
     ESP_ERROR_CHECK(audio_init());  // moved earlier: voice_play() needs the codec
                                      // ready before the first status announcement,
                                      // and audio_init() has no WiFi dependency.

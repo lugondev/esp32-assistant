@@ -69,6 +69,16 @@ config AA_SPK_DIN
     int "MAX98357A speaker I2S DIN (data into amp) gpio"
     default 7
 
+config AA_BOOT_COLOR_BARS
+    bool "Show RGB color bars for 2s at boot (display smoke test)"
+    default n
+    help
+        One-time color-pipeline smoke test: paints 5 real color bars right
+        after display_init() and holds them for 2 seconds, so a wrong RGB565
+        channel/bit order is visible at a glance (the green-on-black eyes
+        alone would hide it). Costs ~2s on every boot, so it's off by
+        default — enable when bringing up a new panel or rewiring SPI.
+
 config AA_SKIP_AUDIO_INIT
     bool "Skip mic/speaker I2S hardware init (Wokwi simulation only)"
     default n
