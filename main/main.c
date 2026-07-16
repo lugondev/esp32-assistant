@@ -186,6 +186,22 @@ static int status_bar_height(void) {
     return display_height() <= 64 ? 12 : 24;
 }
 
+// Rows the status bar actually occupies on the idle (eyes) screen — 0 on a
+// 1-bit panel, where those 12 rows are 19% of the panel's height and the
+// eyes need every row they can get (robot_eyes' geometry is pinned to
+// panel_h/4 by the decor budget, so height handed to the eyes band is the
+// ONLY way to grow them there). The cost is real: the bar carries the WiFi
+// bars, the battery gauge AND the status text, so a mono panel shows none
+// of those while idle — they come back with the next status message, which
+// leaves the idle screen. Non-idle screens (display_show's text path) are
+// untouched on every panel.
+//
+// Distinct from status_bar_height(), which stays the bar's own natural
+// height and still sizes the scratch buffer even when nothing is drawn.
+static int idle_status_bar_height(void) {
+    return display_is_mono() ? 0 : status_bar_height();
+}
+
 // Renders + flushes the status bar strip (WiFi bars, centered text, battery).
 // Factored out because two spots need it: every status message, and the
 // periodic idle refresh (STATUS_BAR_REFRESH_MS).
@@ -244,9 +260,14 @@ static void status_task(void *arg) {
                 display_show(m.line1, m.has_line2 ? m.line2 : NULL);
             } else {
                 int w = display_width(), h = display_height();
-                int status_bar_h = status_bar_height();
+                // Sized/filled at the bar's natural height even when the idle
+                // screen draws no bar (mono): it doubles as the full-screen
+                // clear scratch below, and a 0-row buffer would be a 0-byte
+                // malloc feeding a flush loop that never advances.
+                int scratch_h = status_bar_height();
+                int status_bar_h = idle_status_bar_height();
                 if (!s_bar_buf) {
-                    s_bar_buf = heap_caps_malloc((size_t)w * status_bar_h * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+                    s_bar_buf = heap_caps_malloc((size_t)w * scratch_h * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
                 }
                 if (!s_bar_buf) {
                     ESP_LOGE(TAG, "statusbar: PSRAM alloc failed, falling back to text");
@@ -261,13 +282,15 @@ static void status_task(void *arg) {
                         // neither region redraws (e.g. eyes-band margins).
                         // s_bar_buf is reused as an EYES_BG-filled scratch
                         // band; statusbar_render below overwrites it anyway.
-                        gfx_fill_rect(s_bar_buf, w, status_bar_h, 0, 0, w, status_bar_h, EYES_BG);
-                        for (int y = 0; y < h; y += status_bar_h) {
-                            int band = (y + status_bar_h > h) ? h - y : status_bar_h;
+                        gfx_fill_rect(s_bar_buf, w, scratch_h, 0, 0, w, scratch_h, EYES_BG);
+                        for (int y = 0; y < h; y += scratch_h) {
+                            int band = (y + scratch_h > h) ? h - y : scratch_h;
                             display_flush(0, y, w, band, s_bar_buf);
                         }
                     }
-                    render_status_bar(s_bar_buf, w, status_bar_h, m.line1);
+                    if (status_bar_h > 0) {
+                        render_status_bar(s_bar_buf, w, status_bar_h, m.line1);
+                    }
                     last_bar_ms = (uint32_t)(esp_timer_get_time() / 1000);
                     force_frame = true;   // new text/emotion: redraw eyes + decor too
                 }
@@ -283,7 +306,7 @@ static void status_task(void *arg) {
         }
         if (idle_eyes_active) {
             int w = display_width(), h = display_height();
-            int status_bar_h = status_bar_height();
+            int status_bar_h = idle_status_bar_height();
             int eyes_h = h - status_bar_h;
             int band_y, band_h;
             robot_eyes_dirty_band(eyes_h, &band_y, &band_h);
@@ -299,7 +322,7 @@ static void status_task(void *arg) {
             uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
             // Keep the otherwise-static status bar (WiFi bars / battery) alive
             // during long idles — nothing else repaints it between messages.
-            if (now_ms - last_bar_ms >= STATUS_BAR_REFRESH_MS) {
+            if (status_bar_h > 0 && now_ms - last_bar_ms >= STATUS_BAR_REFRESH_MS) {
                 last_bar_ms = now_ms;
                 render_status_bar(s_bar_buf, w, status_bar_h, m.line1);
             }

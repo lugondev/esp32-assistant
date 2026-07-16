@@ -174,5 +174,6 @@ const display_ops_t display_ssd1306_ops = {
     .flush = ssd1306_flush,
     .width = DISP_WIDTH,
     .height = DISP_HEIGHT,
+    .mono = true,   // 1-bit panel: ssd1306_flush thresholds via pixel_on()
     .set_backlight = ssd1306_set_backlight,
 };

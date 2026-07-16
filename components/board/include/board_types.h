@@ -40,6 +40,17 @@ typedef struct {
     void (*flush)(int x, int y, int w, int h, const uint16_t *rgb565);
     int width;   // panel dimensions in pixels; 0 if flush is NULL
     int height;
+    // True for 1-bit panels, where flush() thresholds each RGB565 pixel to
+    // on/off by luminance (see ssd1306's pixel_on) instead of showing it —
+    // so any gradient or dimmed tone lands as either fully lit or fully
+    // dark, never in between, and such a panel is also small enough that
+    // screen real estate is worth spending differently (see main.c's
+    // idle_status_bar_height, the only caller today).
+    //
+    // Deliberately NOT inferred from a small `height`, which is a separate
+    // question: a color 128x64 panel would still render gradients fine, and
+    // a 128x128 OLED still couldn't.
+    bool mono;
     // Turn the panel backlight on/off. GPIO on/off only, no PWM dimming.
     void (*set_backlight)(bool on);
 } display_ops_t;

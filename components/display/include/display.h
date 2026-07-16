@@ -25,5 +25,10 @@ void display_flush(int x, int y, int w, int h, const uint16_t *rgb565);
 int display_width(void);
 int display_height(void);
 
+// True if the panel is 1-bit (see display_ops_t.mono): everything
+// display_flush() is handed gets thresholded to on/off by luminance, so
+// gradients and dimmed tones can't survive the trip.
+bool display_is_mono(void);
+
 // Turn the panel backlight on/off (GPIO, no PWM — see st7789 driver comment).
 void display_set_backlight(bool on);

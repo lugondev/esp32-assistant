@@ -180,6 +180,7 @@ const display_ops_t display_st7789_ops = {
     .init = st7789_init,
     .show = st7789_show,
     .flush = st7789_flush,
+    .mono = false,  // 16-bit color: pixels reach the panel as handed over
     .width = DISP_WIDTH,
     .height = DISP_HEIGHT,
     .set_backlight = st7789_set_backlight,
