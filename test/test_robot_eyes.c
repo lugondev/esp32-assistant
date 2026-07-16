@@ -368,6 +368,25 @@ static void test_render_is_deterministic(void) {
     for (int i = 0; i < DW * DH; i++) CHECK(a[i] == b[i]);
 }
 
+static bool frames_differ(robot_emotion_t e, uint32_t t1, uint32_t t2) {
+    static uint16_t a[DW * DH], b[DW * DH];
+    robot_eyes_render(a, DW, DH, DH, 0, t1, e, EYE, BG);
+    robot_eyes_render(b, DW, DH, DH, 0, t2, e, EYE, BG);
+    for (int i = 0; i < DW * DH; i++) if (a[i] != b[i]) return true;
+    return false;
+}
+
+static void test_motion_emotions_animate_while_open(void) {
+    // Both instants sit outside the respective emotion's blink window.
+    CHECK(frames_differ(ROBOT_EMOTION_FRUSTRATED, 150, 210));  // SHAKE: 60ms half-cycle
+    CHECK(frames_differ(ROBOT_EMOTION_CONFUSED,   150, 210));  // SHAKE
+    // BOUNCE: 150 vs 300, NOT 150 vs 450 — the triangle wave is symmetric
+    // around its 300ms peak, so 150 and 450 quantize to the same offset.
+    CHECK(frames_differ(ROBOT_EMOTION_GLEE,       150, 300));
+    CHECK(frames_differ(ROBOT_EMOTION_LAUGHING,   150, 275));  // OSCILLATE: phases in 250ms cycle
+    CHECK(!frames_differ(ROBOT_EMOTION_NEUTRAL,   500, 560));  // control: no motion
+}
+
 static void test_happy_family_is_top_heavy_arcs(void) {
     // bottom_cut erases the eye's lower part → EYE pixels above the panel
     // center must strongly outnumber those below. NEUTRAL (no cut) is the
@@ -442,6 +461,7 @@ int main(void) {
     test_render_is_deterministic();
     test_asym_emotions_differ_between_eyes();
     test_happy_family_is_top_heavy_arcs();
+    test_motion_emotions_animate_while_open();
     if (failures) { printf("%d FAILURES\n", failures); return 1; }
     printf("ALL PASS\n");
     return 0;

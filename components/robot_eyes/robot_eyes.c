@@ -185,6 +185,36 @@ static void render_eye_box(uint16_t *buf, int buf_w, int buf_rows,
                        bg_color);
 }
 
+// Motion is a pure function of now_ms (square/triangle waves) — no RNG,
+// preserving this file's deterministic contract. dx/dy are pixel offsets;
+// dh_pct adds to height_pct before scaling.
+static void motion_offsets(const emotion_params_t *em, int r, uint32_t now_ms,
+                           int *dx, int *dy, int *dh_pct) {
+    *dx = 0; *dy = 0; *dh_pct = 0;
+    int amp = em->motion_amp_pct;
+    switch (em->motion) {
+    case ROBOT_MOTION_SHAKE: {          // horizontal jitter, 120ms square wave
+        int a = (r * amp) / 100;
+        if (a < 1) a = 1;
+        *dx = ((now_ms / 60u) % 2u) ? a : -a;
+        break;
+    }
+    case ROBOT_MOTION_BOUNCE: {         // vertical hop 0→-amp→0, 600ms triangle
+        uint32_t ph = now_ms % 600u;
+        uint32_t tri = ph < 300u ? ph : 600u - ph;
+        *dy = -(int)(((uint32_t)((r * amp) / 100) * tri) / 300u);
+        break;
+    }
+    case ROBOT_MOTION_OSCILLATE: {      // height_pct wobble ±amp, 250ms triangle
+        uint32_t ph = now_ms % 250u;
+        uint32_t tri = ph < 125u ? ph : 250u - ph;
+        *dh_pct = (int)((2u * (uint32_t)amp * tri) / 125u) - amp;
+        break;
+    }
+    default: break;
+    }
+}
+
 void robot_eyes_render(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
                         int y_offset, uint32_t now_ms, robot_emotion_t emotion,
                         uint16_t eye_color, uint16_t bg_color) {
@@ -224,15 +254,18 @@ void robot_eyes_render(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
     int cxs[2] = { left_cx, right_cx };
     bool is_left[2] = { true, false };
 
+    int mdx, mdy, mdh;
+    motion_offsets(em, r, now_ms, &mdx, &mdy, &mdh);
+
     bool closed = robot_eyes_is_closed_for(emotion, now_ms);
     for (int i = 0; i < 2; i++) {
         const eye_params_t *p = sides[i];
         int ew = (base_eye_w * p->width_pct) / 100;
-        int eh = (base_eye_h * p->height_pct) / 100;
+        int eh = (base_eye_h * (p->height_pct + mdh)) / 100;
         int corner_r = (ew * 2) / 10;   // 0.2 * ew, then further scaled below
         corner_r = (corner_r * p->corner_pct) / 100;
-        int cy = cy0 + (r * p->y_shift_pct) / 100;
-        int ex = cxs[i] - ew / 2, ey = cy - eh / 2;
+        int cy = cy0 + (r * p->y_shift_pct) / 100 + mdy;
+        int ex = cxs[i] + mdx - ew / 2, ey = cy - eh / 2;
 
         if (!closed) {
             render_eye_box(buf, buf_w, buf_rows, ex, ey, ew, eh, corner_r,
