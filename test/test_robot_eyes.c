@@ -414,6 +414,40 @@ static void test_happy_family_is_top_heavy_arcs(void) {
     CHECK(above <= 2 * below);
 }
 
+static int count_eye_px(void) {
+    int n = 0;
+    for (int i = 0; i < DW * DH; i++) if (dbuf[i] == EYE) n++;
+    return n;
+}
+
+static void test_sweat_drop_pulses(void) {
+    // NERVOUS is open at both 150 and 650 (blink 2200/120); 150%800<500 →
+    // drop visible, 650%800>=500 → hidden. The eyes themselves are
+    // identical at both instants, so the pixel delta IS the sweat drop.
+    dclear();
+    robot_eyes_render(dbuf, DW, DH, DH, 0, 150, ROBOT_EMOTION_NERVOUS, EYE, BG);
+    int with_drop = count_eye_px();
+    dclear();
+    robot_eyes_render(dbuf, DW, DH, DH, 0, 650, ROBOT_EMOTION_NERVOUS, EYE, BG);
+    int without_drop = count_eye_px();
+    CHECK(with_drop > without_drop);
+}
+
+static void test_tear_slides_down_over_time(void) {
+    // CRYING is open at 300 and 900 (blink 4500/250). Different tear
+    // phases → different frames, and the later phase must reach DEEPER
+    // (lowest lit row sits lower).
+    CHECK(frames_differ(ROBOT_EMOTION_CRYING, 300, 900));
+    int lowest_a = -1, lowest_b = -1;
+    dclear();
+    robot_eyes_render(dbuf, DW, DH, DH, 0, 300, ROBOT_EMOTION_CRYING, EYE, BG);
+    for (int y = 0; y < DH; y++) for (int x = 0; x < DW; x++) if (dpx(x, y) == EYE) lowest_a = y;
+    dclear();
+    robot_eyes_render(dbuf, DW, DH, DH, 0, 900, ROBOT_EMOTION_CRYING, EYE, BG);
+    for (int y = 0; y < DH; y++) for (int x = 0; x < DW; x++) if (dpx(x, y) == EYE) lowest_b = y;
+    CHECK(lowest_b > lowest_a);
+}
+
 static void test_asym_emotions_differ_between_eyes(void) {
     robot_emotion_t asym[] = { ROBOT_EMOTION_SKEPTICAL, ROBOT_EMOTION_SUSPICIOUS,
                                ROBOT_EMOTION_ANNOYED, ROBOT_EMOTION_UNIMPRESSED };
@@ -462,6 +496,8 @@ int main(void) {
     test_asym_emotions_differ_between_eyes();
     test_happy_family_is_top_heavy_arcs();
     test_motion_emotions_animate_while_open();
+    test_sweat_drop_pulses();
+    test_tear_slides_down_over_time();
     if (failures) { printf("%d FAILURES\n", failures); return 1; }
     printf("ALL PASS\n");
     return 0;

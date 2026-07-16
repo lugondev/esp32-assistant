@@ -185,6 +185,40 @@ static void render_eye_box(uint16_t *buf, int buf_w, int buf_rows,
                        bg_color);
 }
 
+// Water drop: a filled circle with a pointed triangular tail above it.
+// SWEAT pulses on/off on an 800ms cycle at the right eye's top-outer
+// corner; TEAR slides from just under the right eye down to the dirty
+// band's bottom edge on a 1200ms sawtooth, then resets. Drawn inside the
+// eyes band — no new decor band, no extra SPI cost.
+#define ROBOT_SWEAT_CYCLE_MS   800u
+#define ROBOT_SWEAT_VISIBLE_MS 500u
+#define ROBOT_TEAR_CYCLE_MS   1200u
+
+static void render_drop(uint16_t *buf, int buf_w, int buf_rows, robot_drop_t drop,
+                        int ex, int ey, int ew, int eh, int r, int band_bottom_y,
+                        uint32_t now_ms, uint16_t color) {
+    int dr = r / 8;
+    if (dr < 1) dr = 1;
+    int cx, cy;
+    if (drop == ROBOT_DROP_SWEAT) {
+        if ((now_ms % ROBOT_SWEAT_CYCLE_MS) >= ROBOT_SWEAT_VISIBLE_MS) return;
+        cx = ex + ew;
+        cy = ey - dr;
+    } else if (drop == ROBOT_DROP_TEAR) {
+        int start_y = ey + eh + 2 * dr;
+        int end_y = band_bottom_y - dr - 1;
+        if (end_y < start_y) end_y = start_y;
+        uint32_t ph = now_ms % ROBOT_TEAR_CYCLE_MS;
+        cy = start_y + (int)(((uint32_t)(end_y - start_y) * ph) / ROBOT_TEAR_CYCLE_MS);
+        cx = ex + (3 * ew) / 4;
+    } else {
+        return;
+    }
+    gfx_fill_circle(buf, buf_w, buf_rows, cx, cy, dr, color);
+    gfx_fill_triangle(buf, buf_w, buf_rows, cx, cy - 3 * dr,
+                       cx - dr, cy, cx + dr, cy, color);
+}
+
 // Motion is a pure function of now_ms (square/triangle waves) — no RNG,
 // preserving this file's deterministic contract. dx/dy are pixel offsets;
 // dh_pct adds to height_pct before scaling.
@@ -258,6 +292,7 @@ void robot_eyes_render(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
     motion_offsets(em, r, now_ms, &mdx, &mdy, &mdh);
 
     bool closed = robot_eyes_is_closed_for(emotion, now_ms);
+    int right_ex = 0, right_ey = 0, right_ew = 0, right_eh = 0;
     for (int i = 0; i < 2; i++) {
         const eye_params_t *p = sides[i];
         int ew = (base_eye_w * p->width_pct) / 100;
@@ -266,6 +301,7 @@ void robot_eyes_render(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
         corner_r = (corner_r * p->corner_pct) / 100;
         int cy = cy0 + (r * p->y_shift_pct) / 100 + mdy;
         int ex = cxs[i] + mdx - ew / 2, ey = cy - eh / 2;
+        if (i == 1) { right_ex = ex; right_ey = ey; right_ew = ew; right_eh = eh; }
 
         if (!closed) {
             render_eye_box(buf, buf_w, buf_rows, ex, ey, ew, eh, corner_r,
@@ -277,6 +313,14 @@ void robot_eyes_render(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
             if (band_h < 1) band_h = 1;
             gfx_fill_rect(buf, buf_w, buf_rows, ex, cy - band_h / 2, ew, band_h, eye_color);
         }
+    }
+
+    // Drops anchor on the right eye's OPEN geometry (computed above whether
+    // or not this frame is mid-blink) so they don't jump during a blink.
+    if (em->drop != ROBOT_DROP_NONE) {
+        int band_bottom = cy0 + (r * ROBOT_EYES_MAX_REACH_PCT) / 100;
+        render_drop(buf, buf_w, buf_rows, em->drop, right_ex, right_ey,
+                     right_ew, right_eh, r, band_bottom, now_ms, eye_color);
     }
 }
 
