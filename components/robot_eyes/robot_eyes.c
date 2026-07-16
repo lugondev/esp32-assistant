@@ -549,6 +549,57 @@ static void render_waves(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
     }
 }
 
+uint32_t robot_eyes_frame_key(robot_emotion_t emotion, uint32_t now_ms) {
+    if ((unsigned)emotion >= ROBOT_EMOTION_COUNT) emotion = ROBOT_EMOTION_NEUTRAL;
+    const emotion_params_t *em = &EMOTIONS[emotion];
+
+    // Raw wave phases, NOT pixel offsets: motion_offsets() needs r (pixel
+    // scale), which this key deliberately doesn't take — tracking the phase
+    // is strictly finer-grained than any pixel offset derived from it, which
+    // keeps the guarantee one-sided (equal key => equal pixels; see header).
+    uint32_t motion_ph = 0;   // 0..300
+    switch (em->motion) {
+    case ROBOT_MOTION_SHAKE:     motion_ph = (now_ms / 60u) % 2u; break;
+    case ROBOT_MOTION_BOUNCE: {  uint32_t ph = now_ms % 600u;
+                                  motion_ph = ph < 300u ? ph : 600u - ph; break; }
+    case ROBOT_MOTION_OSCILLATE: { uint32_t ph = now_ms % 250u;
+                                  motion_ph = ph < 125u ? ph : 250u - ph; break; }
+    default: break;
+    }
+    uint32_t drop_ph = 0;     // SWEAT: 0/1 visible; TEAR: 0..1199 slide phase
+    switch (em->drop) {
+    case ROBOT_DROP_SWEAT:
+        drop_ph = (now_ms % ROBOT_SWEAT_CYCLE_MS) < ROBOT_SWEAT_VISIBLE_MS; break;
+    case ROBOT_DROP_TEAR:
+        drop_ph = now_ms % ROBOT_TEAR_CYCLE_MS; break;
+    default: break;
+    }
+    uint32_t zzz = emotion == ROBOT_EMOTION_SLEEPY
+        ? (now_ms / ROBOT_ZZZ_STEP_MS) % ROBOT_ZZZ_STEPS : 0;
+
+    // Disjoint bit fields (no hashing, so no collisions): bit 31 always set
+    // (a zero key can never be a valid frame, handy as a caller's "none yet"
+    // sentinel), emotion in bits 23-27 (max 27), blink bit 22, motion phase
+    // bits 13-21 (max 300), drop phase bits 2-12 (max 1199), Zzz step bits 0-1.
+    return 0x80000000u
+         | ((uint32_t)emotion << 23)
+         | ((robot_eyes_is_closed_for(emotion, now_ms) ? 1u : 0u) << 22)
+         | ((motion_ph & 0x1FFu) << 13)
+         | ((drop_ph & 0x7FFu) << 2)
+         | (zzz & 0x3u);
+}
+
+uint32_t robot_eyes_decor_frame_key(robot_decor_t decor, uint32_t now_ms) {
+    switch (decor) {
+    case ROBOT_DECOR_MOUTH:   // 2-state flap: open or closed half-cycle
+        return 1u + ((now_ms % ROBOT_MOUTH_CYCLE_MS) < (ROBOT_MOUTH_CYCLE_MS / 2) ? 1u : 0u);
+    case ROBOT_DECOR_WAVES:   // continuous triangle waves: every frame differs
+        return now_ms;
+    default:
+        return 0;
+    }
+}
+
 void robot_eyes_render_decor(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
                               int y_offset, uint32_t now_ms, robot_decor_t decor,
                               uint16_t fg_color, uint16_t bg_color) {

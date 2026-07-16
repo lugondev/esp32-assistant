@@ -82,6 +82,17 @@ typedef enum {
 // EMOTIONS table). robot_eyes_is_closed(t) is this with NEUTRAL.
 bool robot_eyes_is_closed_for(robot_emotion_t emotion, uint32_t now_ms);
 
+// Compact fingerprint of everything time-varying in a frame: blink state,
+// motion phase, drop phase, and SLEEPY's Zzz step. Guarantee: two calls
+// returning the SAME key for the same emotion render pixel-identical
+// frames, so the caller may skip the render + SPI flush entirely. Most
+// emotions are static between blinks, which makes the idle animation
+// nearly free instead of re-flushing an unchanged frame several times a
+// second. The reverse doesn't hold: phases are tracked finer than the
+// resulting pixel offsets, so the key may occasionally change without the
+// pixels changing (a wasted render) — never a stale frame.
+uint32_t robot_eyes_frame_key(robot_emotion_t emotion, uint32_t now_ms);
+
 // Short lowercase display name ("neutral", "glee", ...) — shown on the
 // status bar when an emotion is picked manually (e.g. the random-emotion
 // button). Out-of-range values return "?", never NULL.
@@ -153,3 +164,9 @@ void robot_eyes_decor_band(int panel_h, robot_decor_t decor, int *y, int *height
 void robot_eyes_render_decor(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
                               int y_offset, uint32_t now_ms, robot_decor_t decor,
                               uint16_t fg_color, uint16_t bg_color);
+
+// robot_eyes_frame_key's counterpart for the decor band: same skip-if-equal
+// contract. MOUTH toggles with its 300ms flap cycle; WAVES animates
+// continuously (every frame differs, the key just echoes now_ms); NONE is a
+// constant.
+uint32_t robot_eyes_decor_frame_key(robot_decor_t decor, uint32_t now_ms);

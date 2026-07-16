@@ -9,6 +9,7 @@
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include <string.h>
 
 static const char *TAG = "display";
@@ -16,6 +17,15 @@ static const char *TAG = "display";
 #define DISP_SPI_HOST   SPI2_HOST
 #define DISP_WIDTH      240
 #define DISP_HEIGHT     240
+
+// SPI pixel clock. 20MHz (~2.5MB/s) flushes the robot-eyes dirty band
+// (~57KB) in ~25ms — the difference between the old 4MHz's ~8fps ceiling
+// and a comfortably animated HUD. ST7789 silicon is generally happy well
+// past 40MHz; the practical limit here is the wiring (each corrupted
+// transaction misdirects one chunk's row-address-set, showing up as a
+// stray shifted band). If those artifacts appear on a jumper-wired panel,
+// step back down toward 10MHz.
+#define DISP_PCLK_HZ    (20 * 1000 * 1000)
 
 static esp_lcd_panel_handle_t s_panel;
 
@@ -31,8 +41,17 @@ int g_st7789_bl_pin;
 #define CLEAR_CHUNK_ROWS 24
 
 static void clear_screen(void) {
-    static uint16_t black_chunk[DISP_WIDTH * CLEAR_CHUNK_ROWS];
-    memset(black_chunk, 0, sizeof black_chunk);
+    // Lazily-allocated PSRAM scratch, NOT a static array: the static version
+    // pinned 11.5KB of internal SRAM for the device's whole life (static
+    // storage exists whether or not this ever runs) — internal RAM is the
+    // scarce resource here, and this same display_flush path already runs
+    // off PSRAM buffers everywhere else (robot_eyes, statusbar).
+    static uint16_t *black_chunk;
+    if (!black_chunk) {
+        black_chunk = heap_caps_calloc((size_t)DISP_WIDTH * CLEAR_CHUNK_ROWS,
+                                        sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+        if (!black_chunk) return;   // no PSRAM: skip the clear rather than crash
+    }
     for (int y = 0; y < DISP_HEIGHT; y += CLEAR_CHUNK_ROWS) {
         esp_lcd_panel_draw_bitmap(s_panel, 0, y, DISP_WIDTH, y + CLEAR_CHUNK_ROWS, black_chunk);
     }
@@ -78,6 +97,16 @@ static esp_err_t st7789_init(const void *cfg_v) {
         .sclk_io_num = c->sclk,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
+        // Deliberately small — do NOT raise this to batch bigger flushes.
+        // Our render buffers live in PSRAM, which spi_master can't DMA from
+        // directly: it allocates an INTERNAL bounce buffer per queued
+        // transaction, sized to the chunk (spi_master.c setup_priv_desc).
+        // esp_lcd queues all of a flush's chunks back-to-back, so worst-case
+        // transient internal-DMA memory is chunk_size * min(chunks_per_flush,
+        // trans_queue_depth): at this 3.8KB it's a proven-safe ~38KB; at 32KB
+        // chunks it needed ~96KB and every flush failed on hardware with
+        // "spi transmit (queue) color failed" (ESP_ERR_NO_MEM). The real
+        // flush-speed lever is DISP_PCLK_HZ above, not fewer transactions.
         .max_transfer_sz = DISP_WIDTH * DISPLAY_FONT_GLYPH_HEIGHT * 2,
     };
     ESP_ERROR_CHECK(spi_bus_initialize(DISP_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO));
@@ -91,7 +120,7 @@ static esp_err_t st7789_init(const void *cfg_v) {
                         // clock polarity/phase, so the panel silently
                         // misreads every SPI command during init even though
                         // there's no read-back to detect it in software.
-        .pclk_hz = 4 * 1000 * 1000,
+        .pclk_hz = DISP_PCLK_HZ,
         .trans_queue_depth = 10,
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,

@@ -1,5 +1,6 @@
 #include "robot_eyes.h"
 #include <stdio.h>
+#include <string.h>
 
 static int failures = 0;
 #define CHECK(cond) do { if (!(cond)) { \
@@ -490,6 +491,67 @@ static void test_glow_zero_disables_the_halo(void) {
     robot_eyes_set_glow_pct(ROBOT_EYES_GLOW_PCT_DEFAULT);
 }
 
+static void test_frame_key_static_emotion_stable_between_blinks(void) {
+    // NEUTRAL has no motion/drop: between blink edges every frame renders
+    // pixel-identical, so the key must not change — this is what lets
+    // status_task skip redundant SPI flushes while idle.
+    uint32_t open1 = robot_eyes_frame_key(ROBOT_EMOTION_NEUTRAL, 200);
+    uint32_t open2 = robot_eyes_frame_key(ROBOT_EMOTION_NEUTRAL, 2900);
+    CHECK(open1 == open2);
+    // ...but crossing a blink edge must change it.
+    uint32_t closed = robot_eyes_frame_key(ROBOT_EMOTION_NEUTRAL, 3000);
+    CHECK(closed != open1);
+}
+
+static void test_frame_key_equal_keys_render_equal_frames(void) {
+    // The key's core guarantee: same key => memcmp-identical frame.
+    static uint16_t a[W * H], b[W * H];
+    CHECK(robot_eyes_frame_key(ROBOT_EMOTION_NEUTRAL, 200) ==
+          robot_eyes_frame_key(ROBOT_EMOTION_NEUTRAL, 2900));
+    robot_eyes_render(a, W, H, H, 0, 200, ROBOT_EMOTION_NEUTRAL, EYE, BG);
+    robot_eyes_render(b, W, H, H, 0, 2900, ROBOT_EMOTION_NEUTRAL, EYE, BG);
+    CHECK(memcmp(a, b, sizeof a) == 0);
+}
+
+static void test_frame_key_differs_between_emotions(void) {
+    CHECK(robot_eyes_frame_key(ROBOT_EMOTION_NEUTRAL, 200) !=
+          robot_eyes_frame_key(ROBOT_EMOTION_FOCUSED, 200));
+}
+
+static void test_frame_key_tracks_motion(void) {
+    // CONFUSED shakes on a 120ms square wave: opposite half-periods differ
+    // even though both instants are mid-open (no blink involved).
+    CHECK(robot_eyes_frame_key(ROBOT_EMOTION_CONFUSED, 200) !=
+          robot_eyes_frame_key(ROBOT_EMOTION_CONFUSED, 260));
+}
+
+static void test_frame_key_tracks_sleepy_zzz_steps(void) {
+    // The Zzz staircase adds a glyph every 500ms — the key must change step
+    // to step even though the eyes themselves hold still...
+    CHECK(robot_eyes_frame_key(ROBOT_EMOTION_SLEEPY, 600) !=
+          robot_eyes_frame_key(ROBOT_EMOTION_SLEEPY, 1100));
+    // ...and stay stable within one step (both open, same glyph count).
+    CHECK(robot_eyes_frame_key(ROBOT_EMOTION_SLEEPY, 600) ==
+          robot_eyes_frame_key(ROBOT_EMOTION_SLEEPY, 900));
+}
+
+static void test_decor_frame_key_mouth_toggles(void) {
+    // Mouth flaps on a 300ms cycle: two instants in the same half match,
+    // open vs closed halves differ. NONE is a constant.
+    CHECK(robot_eyes_decor_frame_key(ROBOT_DECOR_MOUTH, 10) ==
+          robot_eyes_decor_frame_key(ROBOT_DECOR_MOUTH, 140));
+    CHECK(robot_eyes_decor_frame_key(ROBOT_DECOR_MOUTH, 10) !=
+          robot_eyes_decor_frame_key(ROBOT_DECOR_MOUTH, 160));
+    CHECK(robot_eyes_decor_frame_key(ROBOT_DECOR_NONE, 10) ==
+          robot_eyes_decor_frame_key(ROBOT_DECOR_NONE, 999));
+}
+
+static void test_decor_frame_key_waves_always_animate(void) {
+    // WAVES bars follow continuous triangle waves — every frame differs.
+    CHECK(robot_eyes_decor_frame_key(ROBOT_DECOR_WAVES, 100) !=
+          robot_eyes_decor_frame_key(ROBOT_DECOR_WAVES, 220));
+}
+
 int main(void) {
     test_closed_only_during_blink_window();
     test_blink_recurs_every_interval();
@@ -526,6 +588,13 @@ int main(void) {
     test_glow_pct_default_and_clamp();
     test_glow_zero_disables_the_halo();
     test_emotion_names_cover_all_states();
+    test_frame_key_static_emotion_stable_between_blinks();
+    test_frame_key_equal_keys_render_equal_frames();
+    test_frame_key_differs_between_emotions();
+    test_frame_key_tracks_motion();
+    test_frame_key_tracks_sleepy_zzz_steps();
+    test_decor_frame_key_mouth_toggles();
+    test_decor_frame_key_waves_always_animate();
     if (failures) { printf("%d FAILURES\n", failures); return 1; }
     printf("ALL PASS\n");
     return 0;

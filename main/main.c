@@ -138,16 +138,22 @@ static QueueHandle_t s_status_q;
 // temporarily covering up, 0.5s after the last volume button press.
 static esp_timer_handle_t s_volume_revert_timer;
 
-// Real ceiling, not a nice round number: the panel's SPI bus is clocked at
-// 4MHz single-line (st7789_init's pclk_hz) = ~500KB/s. Flushing only the
-// eyes' dirty band (robot_eyes_dirty_band — about half the panel's rows;
-// horizontally the two eyes already span nearly the full width at this
-// geometry, so cropping columns too wouldn't save much more) is still
-// ~57KB on a 240-wide panel, i.e. ~115ms/frame. This constant reflects
-// that bus-bound ceiling (~8-9fps) rather than a rate this hardware can't
-// actually deliver; only used while idle_eyes_active, so it doesn't affect
-// the queue's normal portMAX_DELAY responsiveness to real status messages.
-#define EYES_FRAME_MS 120
+// Animation tick while idle_eyes_active (doesn't affect the queue's normal
+// portMAX_DELAY responsiveness to real status messages). Sized against the
+// SPI budget: at 20MHz (st7789_init's pclk_hz, ~2.5MB/s) the eyes' dirty
+// band (robot_eyes_dirty_band, ~57KB on a 240-wide panel) flushes in
+// ~25ms, so 50ms/frame (~20fps) leaves comfortable headroom. Cheap in the
+// common case regardless: each tick first computes robot_eyes_frame_key()
+// and skips the render + flush entirely when nothing on screen would
+// change (a static emotion between blinks — most of the device's idle
+// life), so this tick rate only costs SPI bytes while genuinely animating.
+#define EYES_FRAME_MS 50
+
+// While idle the eyes tick is the only thing running, and nothing else
+// repaints the status bar — without a periodic refresh the WiFi bars and
+// battery gauge shown at the last status message stay frozen on screen for
+// hours. RSSI/battery drift slowly; every 5s is plenty.
+#define STATUS_BAR_REFRESH_MS 5000u
 
 // Shared HUD palette: one continuous background across the status bar and
 // eyes so there's no visible seam between the two regions. Status bar text
@@ -173,10 +179,34 @@ static int status_bar_height(void) {
     return display_height() <= 64 ? 12 : 24;
 }
 
+// Renders + flushes the status bar strip (WiFi bars, centered text, battery).
+// Factored out because two spots need it: every status message, and the
+// periodic idle refresh (STATUS_BAR_REFRESH_MS).
+static void render_status_bar(uint16_t *bar_buf, int w, int bar_h, const char *line1) {
+    int rssi = 0;
+    bool connected = wifi_sta_get_rssi(&rssi);
+    int bars = statusbar_wifi_bars(connected, rssi);
+    // battery_read_pct()/battery_charge_state() are NULL-safe: a board with
+    // no battery hardware wired (board_t.battery == NULL) gets
+    // -1/BATTERY_NOT_CHARGING automatically, so this needs no per-board #ifdef.
+    int batt_pct = battery_read_pct();
+    bool charging = battery_charge_state() == BATTERY_CHARGING;
+    statusbar_render(bar_buf, w, bar_h, bars, line1, batt_pct, charging, HUD_FG, HUD_BG);
+    display_flush(0, 0, w, bar_h, bar_buf);
+}
+
 static void status_task(void *arg) {
     (void)arg;
     status_msg_t m;
     bool idle_eyes_active = false;
+    // Frame-skip bookkeeping: the robot_eyes_frame_key / decor key of the
+    // last frame actually flushed. force_frame covers everything a key can't
+    // see (new status text, entering the HUD, decor buffer reallocation) —
+    // any received message sets it. last_eyes_key 0 can never equal a real
+    // key (bit 31 is always set there).
+    uint32_t last_eyes_key = 0, last_decor_key = 0;
+    bool force_frame = false;
+    uint32_t last_bar_ms = 0;
     // Allocated lazily from PSRAM on first use. s_eyes_buf is sized to the
     // eyes' dirty band (not the full panel — see robot_eyes_dirty_band)
     // since that's the only region redrawn every frame; s_bar_buf covers
@@ -230,18 +260,9 @@ static void status_task(void *arg) {
                             display_flush(0, y, w, band, s_bar_buf);
                         }
                     }
-                    int rssi = 0;
-                    bool connected = wifi_sta_get_rssi(&rssi);
-                    int bars = statusbar_wifi_bars(connected, rssi);
-                    // battery_read_pct()/battery_charge_state() are NULL-safe:
-                    // a board with no battery hardware wired (board_t.battery
-                    // == NULL) gets -1/BATTERY_NOT_CHARGING automatically, so
-                    // this line doesn't need a per-board #ifdef.
-                    int batt_pct = battery_read_pct();
-                    bool charging = battery_charge_state() == BATTERY_CHARGING;
-                    statusbar_render(s_bar_buf, w, status_bar_h, bars, m.line1,
-                                      batt_pct, charging, HUD_FG, HUD_BG);
-                    display_flush(0, 0, w, status_bar_h, s_bar_buf);
+                    render_status_bar(s_bar_buf, w, status_bar_h, m.line1);
+                    last_bar_ms = (uint32_t)(esp_timer_get_time() / 1000);
+                    force_frame = true;   // new text/emotion: redraw eyes + decor too
                 }
             }
             if (m.play_voice) {
@@ -269,9 +290,25 @@ static void status_task(void *arg) {
                 }
             }
             uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
-            robot_eyes_render(s_eyes_buf, w, band_h, eyes_h, band_y, now_ms,
-                               m.emotion, EYES_COLOR, EYES_BG);
-            display_flush(0, status_bar_h + band_y, w, band_h, s_eyes_buf);
+            // Keep the otherwise-static status bar (WiFi bars / battery) alive
+            // during long idles — nothing else repaints it between messages.
+            if (now_ms - last_bar_ms >= STATUS_BAR_REFRESH_MS) {
+                last_bar_ms = now_ms;
+                render_status_bar(s_bar_buf, w, status_bar_h, m.line1);
+            }
+            // Skip the render + SPI flush when this frame would be pixel-
+            // identical to the one already on screen (equal frame key — see
+            // robot_eyes.h). A static emotion between blinks skips >90% of
+            // ticks; the idle screen is where the device spends most of its
+            // life, so this is the difference between hammering the SPI bus
+            // ~20x/s forever and touching it a few times per blink cycle.
+            uint32_t eyes_key = robot_eyes_frame_key(m.emotion, now_ms);
+            if (force_frame || eyes_key != last_eyes_key) {
+                last_eyes_key = eyes_key;
+                robot_eyes_render(s_eyes_buf, w, band_h, eyes_h, band_y, now_ms,
+                                   m.emotion, EYES_COLOR, EYES_BG);
+                display_flush(0, status_bar_h + band_y, w, band_h, s_eyes_buf);
+            }
 
             // Decorations (mouth/"Zzz"/waves) are a separate,
             // independently-sized band deliberately NOT folded into the
@@ -302,11 +339,18 @@ static void status_task(void *arg) {
                     s_decor_buf_h = s_decor_buf ? decor_h : 0;
                 }
                 if (s_decor_buf) {
-                    robot_eyes_render_decor(s_decor_buf, w, decor_h, eyes_h, decor_y,
-                                             now_ms, decor, EYES_COLOR, EYES_BG);
-                    display_flush(0, status_bar_h + decor_y, w, decor_h, s_decor_buf);
+                    // Same skip-if-unchanged gate as the eyes above (MOUTH
+                    // only really changes on its 300ms flap edges).
+                    uint32_t decor_key = robot_eyes_decor_frame_key(decor, now_ms);
+                    if (force_frame || decor_key != last_decor_key) {
+                        last_decor_key = decor_key;
+                        robot_eyes_render_decor(s_decor_buf, w, decor_h, eyes_h, decor_y,
+                                                 now_ms, decor, EYES_COLOR, EYES_BG);
+                        display_flush(0, status_bar_h + decor_y, w, decor_h, s_decor_buf);
+                    }
                 }
             }
+            force_frame = false;
         }
     }
 }
