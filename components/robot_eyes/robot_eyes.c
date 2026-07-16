@@ -2,10 +2,6 @@
 #include "gfx.h"
 #include "display_font.h"
 
-bool robot_eyes_is_closed(uint32_t now_ms) {
-    return (now_ms % ROBOT_EYES_BLINK_INTERVAL_MS) < ROBOT_EYES_BLINK_DURATION_MS;
-}
-
 // Worst-case vertical reach across every emotion in EMOTIONS below, not
 // just NEUTRAL — SURPRISED is the driver: height_pct=130 (half-height
 // 1.3*0.8r=1.04r) plus |y_shift_pct|=15 (0.15r) plus glow_pad_y (0.2r) =
@@ -42,28 +38,108 @@ static uint16_t dim_rgb565(uint16_t c) {
 //     angry/glaring "frown", eyebrows angled down toward the nose). <0 cuts
 //     the top-INNER corner (a sad/drooping brow, angled down away from the
 //     nose). Magnitude (0-100) is the wedge's size as a % of the eye box.
+//   bottom_cut_pct: % of the eye's height erased from its bottom (glow
+//     included), turning the squircle into an open-bottomed arc — the
+//     happy/laughing/glee "smiling eye". 0 = full squircle.
 typedef struct {
     int height_pct, width_pct, corner_pct, y_shift_pct, brow_slant_pct;
+    int bottom_cut_pct;
 } eye_params_t;
 
-typedef struct { eye_params_t left, right; } emotion_params_t;
+typedef enum { ROBOT_MOTION_NONE, ROBOT_MOTION_SHAKE, ROBOT_MOTION_BOUNCE,
+               ROBOT_MOTION_OSCILLATE } robot_motion_t;
+typedef enum { ROBOT_DROP_NONE, ROBOT_DROP_SWEAT, ROBOT_DROP_TEAR } robot_drop_t;
+
+typedef struct {
+    eye_params_t left, right;
+    uint32_t blink_interval_ms, blink_duration_ms;
+    robot_motion_t motion;
+    int motion_amp_pct;   // SHAKE/BOUNCE: % of r; OSCILLATE: ± on height_pct
+    robot_drop_t drop;
+} emotion_params_t;
 
 // One entry per robot_emotion_t value, same order as the enum. Values are
 // this project's own creative choices, not copied from any reference —
 // tuned by eye (pun intended) for a readable expression at ~54px eye
-// height on a 240px-wide panel; adjust freely.
-static const emotion_params_t EMOTIONS[] = {
-    [ROBOT_EMOTION_NEUTRAL]    = { {100,100,100,  0,   0}, {100,100,100,  0,   0} },
-    [ROBOT_EMOTION_HAPPY]      = { { 75,105,140, -5,   0}, { 75,105,140, -5,   0} },
-    [ROBOT_EMOTION_SAD]        = { { 85, 90, 70, 20, -40}, { 85, 90, 70, 20, -40} },
-    [ROBOT_EMOTION_SURPRISED] = { {130,105,100,-15,   0}, {130,105,100,-15,   0} },
-    [ROBOT_EMOTION_ANGRY]      = { { 55, 95, 25,  0,  45}, { 55, 95, 25,  0,  45} },
-    [ROBOT_EMOTION_SLEEPY]     = { { 30, 90, 50, 25,   0}, { 30, 90, 50, 25,   0} },
-    // Confused: one eyebrow raised, the other neutral — deliberately not
-    // mirrored, unlike every other emotion here.
-    [ROBOT_EMOTION_CONFUSED]   = { {100,100,100,-15, -30}, {100,100,100,  0,   0} },
-    [ROBOT_EMOTION_SUSPICIOUS] = { { 45,100, 35,  8,  20}, { 45,100, 35,  8,  20} },
+// height on a 240px-wide panel; adjust freely, but every entry must keep
+//   0.8*height_pct(+oscillate amp) + |y_shift_pct| + bounce amp + 20 (glow)
+//   <= ROBOT_EYES_MAX_REACH_PCT
+// or the dirty-band canary test fails (and the screen would clip).
+// KEEP IN SYNC with tools/emotions-preview.html EMOTIONS table.
+static const emotion_params_t EMOTIONS[ROBOT_EMOTION_COUNT] = {
+    //                             {  H,  W,  C,  Y,  B,Cut}
+    [ROBOT_EMOTION_NEUTRAL]     = { {100,100,100,  0,  0, 0}, {100,100,100,  0,  0, 0},
+                                    ROBOT_EYES_BLINK_INTERVAL_MS, ROBOT_EYES_BLINK_DURATION_MS,
+                                    ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_HAPPY]       = { { 75,105,140, -5,  0,45}, { 75,105,140, -5,  0,45},
+                                    3000, 150, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_SAD]         = { { 85, 90, 70, 20,-40, 0}, { 85, 90, 70, 20,-40, 0},
+                                    3500, 200, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_SURPRISED]   = { {130,105,100,-15,  0, 0}, {130,105,100,-15,  0, 0},
+                                    3000, 150, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_ANGRY]       = { { 55, 95, 25,  0, 45, 0}, { 55, 95, 25,  0, 45, 0},
+                                    3000, 150, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_SLEEPY]      = { { 30, 90, 50, 25,  0, 0}, { 30, 90, 50, 25,  0, 0},
+                                    3000, 300, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    // Confused: one eyebrow raised, the other neutral — asym, plus a light
+    // head-shake per the reference sheet's "confused · shake" tag.
+    [ROBOT_EMOTION_CONFUSED]    = { {100,100,100,-15,-30, 0}, {100,100,100,  0,  0, 0},
+                                    3000, 150, ROBOT_MOTION_SHAKE, 5, ROBOT_DROP_NONE },
+    // Suspicious went asymmetric in the 28-state expansion (one narrowed,
+    // one flatter eye) to match the reference sheet's "suspicious · asym".
+    [ROBOT_EMOTION_SUSPICIOUS]  = { { 50,100, 35,  6, 25, 0}, { 30,100, 45, 10,  0, 0},
+                                    4000, 200, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_LISTENING]   = { {105,100,100,  0,  0, 0}, {105,100,100,  0,  0, 0},
+                                    5000, 120, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_PONDERING]   = { { 80, 95,100,  0,  0, 0}, { 80, 95,100,  0,  0, 0},
+                                    4000, 250, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_FOCUSED]     = { { 45,100, 60,  0,  0, 0}, { 45,100, 60,  0,  0, 0},
+                                    8000, 150, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_LAUGHING]    = { { 60,105,150, -8,  0,55}, { 60,105,150, -8,  0,55},
+                                    3000, 150, ROBOT_MOTION_OSCILLATE, 15, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_GLEE]        = { { 50,105,160,-10,  0,60}, { 50,105,160,-10,  0,60},
+                                    3000, 150, ROBOT_MOTION_BOUNCE, 8, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_AWE]         = { {130,100,200, -5,  0, 0}, {130,100,200, -5,  0, 0},
+                                    1600, 100, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_CRYING]      = { { 80, 88, 70, 24,-45, 0}, { 80, 88, 70, 24,-45, 0},
+                                    4500, 250, ROBOT_MOTION_NONE, 0, ROBOT_DROP_TEAR },
+    [ROBOT_EMOTION_FURIOUS]     = { { 45, 95, 20,  4, 60, 0}, { 45, 95, 20,  4, 60, 0},
+                                    2500, 120, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_FRUSTRATED]  = { { 55, 95, 25,  2, 40, 0}, { 55, 95, 25,  2, 40, 0},
+                                    3000, 150, ROBOT_MOTION_SHAKE, 6, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_ANNOYED]     = { { 45, 95, 30,  6, 25, 0}, { 60, 95, 30,  0, 15, 0},
+                                    3800, 200, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_UNIMPRESSED] = { { 30,100, 40, 10,  0, 0}, { 40,100, 40,  2,  0, 0},
+                                    4500, 250, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_WORRIED]     = { { 75, 95, 60,  6,-35, 0}, { 75, 95, 60,  6,-35, 0},
+                                    3000, 150, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_NERVOUS]     = { { 70, 95, 55,  6,-35, 0}, { 70, 95, 55,  6,-35, 0},
+                                    2200, 120, ROBOT_MOTION_NONE, 0, ROBOT_DROP_SWEAT },
+    [ROBOT_EMOTION_ANXIOUS]     = { { 80, 95, 55,  4,-40, 0}, { 80, 95, 55,  4,-40, 0},
+                                    1400, 100, ROBOT_MOTION_NONE, 0, ROBOT_DROP_SWEAT },
+    [ROBOT_EMOTION_SCARED]      = { {130,105, 80, -8,  0, 0}, {130,105, 80, -8,  0, 0},
+                                    1800, 100, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_SHOCKED]     = { {135,108,110,-10,  0, 0}, {135,108,110,-10,  0, 0},
+                                    6000, 100, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_TIRED]       = { { 35, 92, 45, 18,-20, 0}, { 35, 92, 45, 18,-20, 0},
+                                    3500, 300, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_BORED]       = { { 25,100, 40, 12,  0, 0}, { 25,100, 40, 12,  0, 0},
+                                    7000, 400, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_SKEPTICAL]   = { {100,100,100, -5,  0, 0}, { 35,100, 60,  8,  0, 0},
+                                    4000, 200, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
+    [ROBOT_EMOTION_SQUINT]      = { { 18,100, 30,  0,  0, 0}, { 18,100, 30,  0,  0, 0},
+                                    9000, 150, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
 };
+
+bool robot_eyes_is_closed_for(robot_emotion_t emotion, uint32_t now_ms) {
+    if ((unsigned)emotion >= ROBOT_EMOTION_COUNT) emotion = ROBOT_EMOTION_NEUTRAL;
+    const emotion_params_t *em = &EMOTIONS[emotion];
+    return (now_ms % em->blink_interval_ms) < em->blink_duration_ms;
+}
+
+bool robot_eyes_is_closed(uint32_t now_ms) {
+    return robot_eyes_is_closed_for(ROBOT_EMOTION_NEUTRAL, now_ms);
+}
 
 // Renders one eye (already-scaled box at ex,ey,ew,eh) plus its glow halo and
 // optional brow-slant wedge. is_left selects which top corner is "outer"
@@ -102,6 +178,7 @@ static void render_eye_box(uint16_t *buf, int buf_w, int buf_rows,
 void robot_eyes_render(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
                         int y_offset, uint32_t now_ms, robot_emotion_t emotion,
                         uint16_t eye_color, uint16_t bg_color) {
+    if ((unsigned)emotion >= ROBOT_EMOTION_COUNT) emotion = ROBOT_EMOTION_NEUTRAL;
     gfx_fill_rect(buf, buf_w, buf_rows, 0, 0, buf_w, buf_rows, bg_color);
 
     int r  = panel_h / 4;
@@ -137,7 +214,7 @@ void robot_eyes_render(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
     int cxs[2] = { left_cx, right_cx };
     bool is_left[2] = { true, false };
 
-    bool closed = robot_eyes_is_closed(now_ms);
+    bool closed = robot_eyes_is_closed_for(emotion, now_ms);
     for (int i = 0; i < 2; i++) {
         const eye_params_t *p = sides[i];
         int ew = (base_eye_w * p->width_pct) / 100;

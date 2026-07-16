@@ -6,11 +6,15 @@
 // host-testable. Time is the only input: given the same now_ms, behavior
 // is always identical (no RNG, no mutable state to carry between calls).
 
+// NEUTRAL's blink schedule. Every emotion has its own interval/duration in
+// robot_eyes.c's EMOTIONS table (a bored eye blinks slowly, an anxious one
+// fast); these two constants remain as NEUTRAL's entry and as the legacy
+// default robot_eyes_is_closed() answers for.
 #define ROBOT_EYES_BLINK_INTERVAL_MS 3000u  // time between blinks
 #define ROBOT_EYES_BLINK_DURATION_MS 150u   // how long a blink stays closed
 
-// True if, at now_ms, the eyes should render closed. Blinks recur every
-// ROBOT_EYES_BLINK_INTERVAL_MS and last ROBOT_EYES_BLINK_DURATION_MS.
+// True if, at now_ms, the eyes should render closed. Equivalent to
+// robot_eyes_is_closed_for(ROBOT_EMOTION_NEUTRAL, now_ms).
 bool robot_eyes_is_closed(uint32_t now_ms);
 
 // The panel-space vertical band [*y, *y + *height) that ever changes across
@@ -21,12 +25,20 @@ bool robot_eyes_is_closed(uint32_t now_ms);
 void robot_eyes_dirty_band(int panel_h, int *y, int *height);
 
 // Emotions are mutually exclusive parametric presets (height/width/corner
-// scale, vertical shift, eyebrow slant) applied on top of the same base
-// squircle+glow shape — not separate bitmaps. Most are mirrored across both
-// eyes; CONFUSED deliberately isn't (one eyebrow raised), which is why
-// robot_eyes_render takes a single emotion and resolves left/right
-// parameters internally rather than exposing per-eye knobs to the caller.
+// scale, vertical shift, eyebrow slant, bottom cut) applied on top of the
+// same base squircle+glow shape — not separate bitmaps — plus per-emotion
+// blink schedule, an optional motion (shake/bounce/oscillate) and an
+// optional sweat/tear drop. Most are mirrored across both eyes; the "asym"
+// ones (CONFUSED, SKEPTICAL, SUSPICIOUS, ANNOYED, UNIMPRESSED) deliberately
+// aren't, which is why robot_eyes_render takes a single emotion and
+// resolves left/right parameters internally rather than exposing per-eye
+// knobs to the caller.
+//
+// 28 states in 7 groups. The first 8 values predate the expansion — their
+// names and order are frozen (main.c and tests reference them); new states
+// are only ever appended before ROBOT_EMOTION_COUNT.
 typedef enum {
+    // original 8 — order frozen
     ROBOT_EMOTION_NEUTRAL,
     ROBOT_EMOTION_HAPPY,
     ROBOT_EMOTION_SAD,
@@ -35,7 +47,39 @@ typedef enum {
     ROBOT_EMOTION_SLEEPY,
     ROBOT_EMOTION_CONFUSED,
     ROBOT_EMOTION_SUSPICIOUS,
+    // group 1 — neutral & attention
+    ROBOT_EMOTION_LISTENING,
+    ROBOT_EMOTION_PONDERING,
+    ROBOT_EMOTION_FOCUSED,
+    // group 2 — positive
+    ROBOT_EMOTION_LAUGHING,
+    ROBOT_EMOTION_GLEE,
+    ROBOT_EMOTION_AWE,
+    // group 3 — negative
+    ROBOT_EMOTION_CRYING,
+    // group 4 — angry / frustration
+    ROBOT_EMOTION_FURIOUS,
+    ROBOT_EMOTION_FRUSTRATED,
+    ROBOT_EMOTION_ANNOYED,
+    ROBOT_EMOTION_UNIMPRESSED,
+    // group 5 — fear & anxiety
+    ROBOT_EMOTION_WORRIED,
+    ROBOT_EMOTION_NERVOUS,
+    ROBOT_EMOTION_ANXIOUS,
+    ROBOT_EMOTION_SCARED,
+    ROBOT_EMOTION_SHOCKED,
+    // group 6 — tired / low energy
+    ROBOT_EMOTION_TIRED,
+    ROBOT_EMOTION_BORED,
+    // group 7 — suspicion / judgement
+    ROBOT_EMOTION_SKEPTICAL,
+    ROBOT_EMOTION_SQUINT,
+    ROBOT_EMOTION_COUNT,
 } robot_emotion_t;
+
+// Per-emotion blink schedule (interval/duration from robot_eyes.c's
+// EMOTIONS table). robot_eyes_is_closed(t) is this with NEUTRAL.
+bool robot_eyes_is_closed_for(robot_emotion_t emotion, uint32_t now_ms);
 
 // Renders two eyes into buf, a buf_w-wide, buf_rows-tall RGB565 crop of a
 // buf_w x panel_h panel, where buf row 0 corresponds to panel row y_offset

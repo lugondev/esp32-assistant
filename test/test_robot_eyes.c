@@ -299,6 +299,90 @@ static void test_render_decor_zzz_builds_up_then_resets(void) {
     CHECK(count_b > count_a);
 }
 
+static void test_is_closed_for_neutral_matches_legacy(void) {
+    for (uint32_t t = 0; t < 6200; t += 37)
+        CHECK(robot_eyes_is_closed(t) == robot_eyes_is_closed_for(ROBOT_EMOTION_NEUTRAL, t));
+}
+
+static void test_per_emotion_blink_schedules(void) {
+    // BORED: 7000/400 — chậm, nhắm lâu
+    CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_BORED, 0) == true);
+    CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_BORED, 399) == true);
+    CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_BORED, 400) == false);
+    CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_BORED, 6999) == false);
+    CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_BORED, 7000) == true);
+    // ANXIOUS: 1400/100 — nhanh
+    CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_ANXIOUS, 99) == true);
+    CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_ANXIOUS, 100) == false);
+    CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_ANXIOUS, 1400) == true);
+    // SQUINT: 9000/150 — gần như không chớp
+    CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_SQUINT, 150) == false);
+    CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_SQUINT, 8999) == false);
+}
+
+static void test_every_emotion_paints_something_when_open(void) {
+    // Catches an empty/all-zero table entry: every emotion, at an instant
+    // its eyes are open, must paint at least one EYE pixel.
+    for (int e = 0; e < ROBOT_EMOTION_COUNT; e++) {
+        uint32_t t = 500;   // outside every entry's blink window (max duration 400)
+        dclear();
+        robot_eyes_render(dbuf, DW, DH, DH, 0, t, (robot_emotion_t)e, EYE, BG);
+        int lit = 0;
+        for (int i = 0; i < DW * DH; i++) if (dbuf[i] == EYE) lit++;
+        CHECK(lit > 0);
+    }
+}
+
+// Times covering the distinct phases: open/closed across the various blink
+// schedules, shake (120ms cycle), bounce (600ms), oscillate (250ms), sweat
+// pulse (800ms), tear slide (1200ms — deepest at ph=1199, i.e. t=5999).
+static const uint32_t SAMPLE_TIMES[] = {
+    0, 59, 60, 149, 150, 199, 250, 399, 500, 650, 899,
+    1300, 2100, 3049, 4400, 5999, 7100, 8999
+};
+#define N_SAMPLE_TIMES (sizeof SAMPLE_TIMES / sizeof SAMPLE_TIMES[0])
+
+static void test_all_emotions_stay_inside_dirty_band(void) {
+    // Render the full panel; every row OUTSIDE the dirty band must be pure
+    // BG for every emotion at every sampled time — an emotion (or a later
+    // task's motion/drop) that overflows the band fails here instead of
+    // silently clipping on the real screen.
+    int band_y, band_h;
+    robot_eyes_dirty_band(DH, &band_y, &band_h);
+    for (int e = 0; e < ROBOT_EMOTION_COUNT; e++) {
+        for (unsigned ti = 0; ti < N_SAMPLE_TIMES; ti++) {
+            dclear();
+            robot_eyes_render(dbuf, DW, DH, DH, 0, SAMPLE_TIMES[ti], (robot_emotion_t)e, EYE, BG);
+            for (int y = 0; y < DH; y++) {
+                if (y >= band_y && y < band_y + band_h) continue;
+                for (int x = 0; x < DW; x++) CHECK(dpx(x, y) == BG);
+            }
+        }
+    }
+}
+
+static void test_render_is_deterministic(void) {
+    static uint16_t a[DW * DH], b[DW * DH];
+    robot_eyes_render(a, DW, DH, DH, 0, 1234, ROBOT_EMOTION_LAUGHING, EYE, BG);
+    robot_eyes_render(b, DW, DH, DH, 0, 1234, ROBOT_EMOTION_LAUGHING, EYE, BG);
+    for (int i = 0; i < DW * DH; i++) CHECK(a[i] == b[i]);
+}
+
+static void test_asym_emotions_differ_between_eyes(void) {
+    robot_emotion_t asym[] = { ROBOT_EMOTION_SKEPTICAL, ROBOT_EMOTION_SUSPICIOUS,
+                               ROBOT_EMOTION_ANNOYED, ROBOT_EMOTION_UNIMPRESSED };
+    for (unsigned k = 0; k < 4; k++) {
+        dclear();
+        robot_eyes_render(dbuf, DW, DH, DH, 0, 500, asym[k], EYE, BG);
+        int left_cx = DW / 4, right_cx = 3 * DW / 4, cy = DH / 2;
+        bool any_diff = false;
+        for (int dy = -20; dy <= 20; dy++)
+            for (int dx = 0; dx <= 20; dx++)
+                if (dpx(left_cx + dx, cy + dy) != dpx(right_cx - dx, cy + dy)) any_diff = true;
+        CHECK(any_diff);
+    }
+}
+
 int main(void) {
     test_closed_only_during_blink_window();
     test_blink_recurs_every_interval();
@@ -324,6 +408,12 @@ int main(void) {
     test_render_decor_zzz_builds_up_then_resets();
     test_render_decor_waves_paints_something();
     test_render_decor_waves_animates_over_time();
+    test_is_closed_for_neutral_matches_legacy();
+    test_per_emotion_blink_schedules();
+    test_every_emotion_paints_something_when_open();
+    test_all_emotions_stay_inside_dirty_band();
+    test_render_is_deterministic();
+    test_asym_emotions_differ_between_eyes();
     if (failures) { printf("%d FAILURES\n", failures); return 1; }
     printf("ALL PASS\n");
     return 0;
