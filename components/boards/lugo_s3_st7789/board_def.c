@@ -20,7 +20,10 @@ static const display_st7789_cfg_t display_cfg = {
     .sclk = 42, .mosi = 41, .dc = 1, .rst = 2, .bl = 17,
 };
 static const buttons_gpio_cfg_t buttons_cfg = {
-    .wake = 47, .vol_up = 40, .vol_down = 39,
+    // .emotion (GPIO46) is an S3 strapping pin — harmless as an active-low
+    // input here since the pull-up keeps it high and the {GPIO0=1} SPI-boot
+    // path ignores it, but don't hold the button during reset/flashing.
+    .wake = 47, .vol_up = 40, .vol_down = 39, .emotion = 46,
 };
 
 // TP4056 not wired on this board yet — fill in gpio_chrg/gpio_stdby once

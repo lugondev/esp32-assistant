@@ -16,7 +16,8 @@ static const display_st7789_cfg_t display_cfg = {
     .sclk = 0, .mosi = 1, .dc = 10, .rst = 18, .bl = 19,
 };
 static const buttons_gpio_cfg_t buttons_cfg = {
-    .wake = 3, .vol_up = 20, .vol_down = 21,
+    // No emotion button: the C3 has no GPIO46 and no free pin wired for it.
+    .wake = 3, .vol_up = 20, .vol_down = 21, .emotion = -1,
 };
 
 static bool match(void) { return true; }   // Kconfig-forced; single C3 board

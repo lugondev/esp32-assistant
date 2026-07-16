@@ -8,9 +8,9 @@
 
 static const char *TAG = "buttons";
 
-#define NBTN 3
-static int s_gpios[NBTN];  // filled from board cfg in gpio_buttons_start
-static const button_id_t s_ids[NBTN]   = { BTN_WAKE, BTN_VOL_UP, BTN_VOL_DOWN };
+#define NBTN 4
+static int s_gpios[NBTN];  // filled from board cfg in gpio_buttons_start; <0 = absent
+static const button_id_t s_ids[NBTN]   = { BTN_WAKE, BTN_VOL_UP, BTN_VOL_DOWN, BTN_EMOTION };
 
 static void (*s_cb)(button_id_t);
 
@@ -20,6 +20,7 @@ static void buttons_task(void *arg) {
     for (int i = 0; i < NBTN; i++) prev[i] = 1;  // released = high (pull-up)
     for (;;) {
         for (int i = 0; i < NBTN; i++) {
+            if (s_gpios[i] < 0) continue;   // button not present on this board
             int lvl = gpio_get_level(s_gpios[i]);
             if (prev[i] == 1 && lvl == 0) {           // high->low = press edge
                 vTaskDelay(pdMS_TO_TICKS(20));          // debounce settle
@@ -40,8 +41,10 @@ static void buttons_task(void *arg) {
 static void gpio_buttons_start(void (*on_press)(button_id_t)) {
     const buttons_gpio_cfg_t *c = (const buttons_gpio_cfg_t *)board_active()->buttons_cfg;
     s_gpios[0] = c->wake; s_gpios[1] = c->vol_up; s_gpios[2] = c->vol_down;
+    s_gpios[3] = c->emotion;
     s_cb = on_press;
     for (int i = 0; i < NBTN; i++) {
+        if (s_gpios[i] < 0) continue;   // button not present on this board
         gpio_config_t c = {
             .pin_bit_mask = 1ULL << s_gpios[i],
             .mode = GPIO_MODE_INPUT,

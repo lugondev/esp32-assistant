@@ -21,7 +21,8 @@ static const display_ssd1306_cfg_t display_cfg = {
     .scl = 42, .sda = 41, .i2c_addr = 0x3C,
 };
 static const buttons_gpio_cfg_t buttons_cfg = {
-    .wake = 47, .vol_up = 40, .vol_down = 39,
+    // See lugo_s3_st7789's note on GPIO46 being a strapping pin.
+    .wake = 47, .vol_up = 40, .vol_down = 39, .emotion = 46,
 };
 
 // Real probe for AA_BOARD_AUTODETECT: an SSD1306 ACKs I2C at 0x3C or 0x3D

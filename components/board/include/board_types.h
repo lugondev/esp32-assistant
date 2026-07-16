@@ -4,11 +4,13 @@
 #include <stdbool.h>
 
 // Moved here from buttons.h so the board layer can reference it without a
-// circular component dependency. Values must stay 0/1/2 (main.c relies on them).
+// circular component dependency. The first three values must stay 0/1/2
+// (main.c relies on them); new buttons are only ever appended.
 typedef enum {
     BTN_WAKE,      // wake / conversation toggle
     BTN_VOL_UP,
     BTN_VOL_DOWN,
+    BTN_EMOTION,   // tact switch: show a random emotion on the eyes
 } button_id_t;
 
 typedef struct {

@@ -82,6 +82,11 @@ typedef enum {
 // EMOTIONS table). robot_eyes_is_closed(t) is this with NEUTRAL.
 bool robot_eyes_is_closed_for(robot_emotion_t emotion, uint32_t now_ms);
 
+// Short lowercase display name ("neutral", "glee", ...) — shown on the
+// status bar when an emotion is picked manually (e.g. the random-emotion
+// button). Out-of-range values return "?", never NULL.
+const char *robot_eyes_emotion_name(robot_emotion_t emotion);
+
 // Glow "border" halo drawn behind each eye, sized as a % of r (the eye
 // radius unit, panel_h/4) vertically and of the eye's width budget
 // horizontally. Static configuration, not animation state — render output

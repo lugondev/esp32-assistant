@@ -454,6 +454,20 @@ static void test_sleepy_zzz_builds_near_the_eye(void) {
     CHECK(diff > 0);   // the cluster actually appeared
 }
 
+static void test_emotion_names_cover_all_states(void) {
+    // Every emotion needs a short display name (shown on the status bar by
+    // the random-emotion button); out-of-range values fall back to "?".
+    for (int e = 0; e < ROBOT_EMOTION_COUNT; e++) {
+        const char *n = robot_eyes_emotion_name((robot_emotion_t)e);
+        CHECK(n != NULL);
+        CHECK(n[0] != '\0');
+    }
+    // spot-check enum<->name alignment at both ends of the table
+    CHECK(robot_eyes_emotion_name(ROBOT_EMOTION_NEUTRAL)[0] == 'n');
+    CHECK(robot_eyes_emotion_name(ROBOT_EMOTION_SQUINT)[0] == 's');
+    CHECK(robot_eyes_emotion_name((robot_emotion_t)ROBOT_EMOTION_COUNT)[0] == '?');
+}
+
 static void test_glow_pct_default_and_clamp(void) {
     CHECK(robot_eyes_glow_pct() == ROBOT_EYES_GLOW_PCT_DEFAULT);
     robot_eyes_set_glow_pct(50);
@@ -511,6 +525,7 @@ int main(void) {
     test_sleepy_zzz_builds_near_the_eye();
     test_glow_pct_default_and_clamp();
     test_glow_zero_disables_the_halo();
+    test_emotion_names_cover_all_states();
     if (failures) { printf("%d FAILURES\n", failures); return 1; }
     printf("ALL PASS\n");
     return 0;

@@ -143,6 +143,45 @@ static const emotion_params_t EMOTIONS[ROBOT_EMOTION_COUNT] = {
                                     9000, 150, ROBOT_MOTION_NONE, 0, ROBOT_DROP_NONE },
 };
 
+// Same order as the enum — a new emotion without a name here renders as
+// "?" and fails test_emotion_names_cover_all_states.
+static const char *const EMOTION_NAMES[ROBOT_EMOTION_COUNT] = {
+    [ROBOT_EMOTION_NEUTRAL]     = "neutral",
+    [ROBOT_EMOTION_HAPPY]       = "happy",
+    [ROBOT_EMOTION_SAD]         = "sad",
+    [ROBOT_EMOTION_SURPRISED]   = "surprised",
+    [ROBOT_EMOTION_ANGRY]       = "angry",
+    [ROBOT_EMOTION_SLEEPY]      = "sleepy",
+    [ROBOT_EMOTION_CONFUSED]    = "confused",
+    [ROBOT_EMOTION_SUSPICIOUS]  = "suspicious",
+    [ROBOT_EMOTION_LISTENING]   = "listening",
+    [ROBOT_EMOTION_PONDERING]   = "pondering",
+    [ROBOT_EMOTION_FOCUSED]     = "focused",
+    [ROBOT_EMOTION_LAUGHING]    = "laughing",
+    [ROBOT_EMOTION_GLEE]        = "glee",
+    [ROBOT_EMOTION_AWE]         = "awe",
+    [ROBOT_EMOTION_CRYING]      = "crying",
+    [ROBOT_EMOTION_FURIOUS]     = "furious",
+    [ROBOT_EMOTION_FRUSTRATED]  = "frustrated",
+    [ROBOT_EMOTION_ANNOYED]     = "annoyed",
+    [ROBOT_EMOTION_UNIMPRESSED] = "unimpressed",
+    [ROBOT_EMOTION_WORRIED]     = "worried",
+    [ROBOT_EMOTION_NERVOUS]     = "nervous",
+    [ROBOT_EMOTION_ANXIOUS]     = "anxious",
+    [ROBOT_EMOTION_SCARED]      = "scared",
+    [ROBOT_EMOTION_SHOCKED]     = "shocked",
+    [ROBOT_EMOTION_TIRED]       = "tired",
+    [ROBOT_EMOTION_BORED]       = "bored",
+    [ROBOT_EMOTION_SKEPTICAL]   = "skeptical",
+    [ROBOT_EMOTION_SQUINT]      = "squint",
+};
+
+const char *robot_eyes_emotion_name(robot_emotion_t emotion) {
+    if ((unsigned)emotion >= ROBOT_EMOTION_COUNT) return "?";
+    const char *n = EMOTION_NAMES[emotion];
+    return n ? n : "?";
+}
+
 bool robot_eyes_is_closed_for(robot_emotion_t emotion, uint32_t now_ms) {
     if ((unsigned)emotion >= ROBOT_EMOTION_COUNT) emotion = ROBOT_EMOTION_NEUTRAL;
     const emotion_params_t *em = &EMOTIONS[emotion];

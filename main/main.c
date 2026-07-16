@@ -17,6 +17,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
+#include "esp_random.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -419,6 +420,21 @@ static void on_button(button_id_t id) {
         // status bar text like everything else instead of a special-cased
         // full-text screen.
         show_volume_overlay(audio_adjust_volume(id == BTN_VOL_UP ? 10 : -10));
+        break;
+    }
+    case BTN_EMOTION: {
+        // Demo/tuning aid: each click shows a different random emotion (the
+        // random pick lives HERE — robot_eyes itself stays RNG-free and
+        // deterministic). Re-rolling the same value as last time would look
+        // like a dead button, so bump to the next state instead.
+        static robot_emotion_t s_last = ROBOT_EMOTION_COUNT;   // "none yet"
+        robot_emotion_t e = (robot_emotion_t)(esp_random() % ROBOT_EMOTION_COUNT);
+        if (e == s_last) e = (robot_emotion_t)((e + 1) % ROBOT_EMOTION_COUNT);
+        s_last = e;
+        status_msg_t m = { .play_voice = false, .has_line2 = false,
+                            .show_idle_eyes = true, .emotion = e };
+        strncpy(m.line1, robot_eyes_emotion_name(e), sizeof(m.line1) - 1);
+        xQueueSend(s_status_q, &m, 0);
         break;
     }
     }
