@@ -14,25 +14,41 @@ static const button_id_t s_ids[NBTN]   = { BTN_WAKE, BTN_VOL_UP, BTN_VOL_DOWN, B
 
 static void (*s_cb)(button_id_t);
 
+// Per-button debounce state machine, one 20ms scan tick for all buttons.
+// Nothing here ever blocks the scan loop — the previous version busy-waited
+// inside the loop for the pressed button's release, so HOLDING one button
+// (e.g. Vol+) froze every other button, including Wake/barge-in.
+typedef enum {
+    BTN_ST_RELEASED,   // idle high (pull-up)
+    BTN_ST_DEBOUNCE,   // saw a press edge; confirm it next tick (20ms settle)
+    BTN_ST_HELD,       // fired; ignore until released (one event per press)
+} btn_state_t;
+
 static void buttons_task(void *arg) {
     (void)arg;
-    int prev[NBTN];
-    for (int i = 0; i < NBTN; i++) prev[i] = 1;  // released = high (pull-up)
+    btn_state_t st[NBTN];
+    for (int i = 0; i < NBTN; i++) st[i] = BTN_ST_RELEASED;
     for (;;) {
         for (int i = 0; i < NBTN; i++) {
             if (s_gpios[i] < 0) continue;   // button not present on this board
             int lvl = gpio_get_level(s_gpios[i]);
-            if (prev[i] == 1 && lvl == 0) {           // high->low = press edge
-                vTaskDelay(pdMS_TO_TICKS(20));          // debounce settle
-                if (gpio_get_level(s_gpios[i]) == 0) {
+            switch (st[i]) {
+            case BTN_ST_RELEASED:
+                if (lvl == 0) st[i] = BTN_ST_DEBOUNCE;   // press edge
+                break;
+            case BTN_ST_DEBOUNCE:
+                if (lvl == 0) {                          // still low = real press
                     ESP_LOGI(TAG, "press gpio%d", s_gpios[i]);
                     if (s_cb) s_cb(s_ids[i]);
-                    // wait for release so a hold doesn't retrigger
-                    while (gpio_get_level(s_gpios[i]) == 0) vTaskDelay(pdMS_TO_TICKS(20));
-                    lvl = 1;
+                    st[i] = BTN_ST_HELD;
+                } else {
+                    st[i] = BTN_ST_RELEASED;             // bounce — ignore
                 }
+                break;
+            case BTN_ST_HELD:
+                if (lvl == 1) st[i] = BTN_ST_RELEASED;
+                break;
             }
-            prev[i] = lvl;
         }
         vTaskDelay(pdMS_TO_TICKS(20));
     }

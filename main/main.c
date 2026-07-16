@@ -395,6 +395,7 @@ static void send_listening_status(void) {
 static void go_idle(void) {
     s_active = false;
     ws_client_set_reconnect(false);
+    wifi_sta_set_perf_mode(false);   // re-enable modem power-save while idle
     s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
     send_idle_status("Idle");
 }
@@ -460,6 +461,7 @@ static void on_button(button_id_t id) {
         } else {
             s_active = true;
             ws_client_set_reconnect(true);
+            wifi_sta_set_perf_mode(true);   // steadier audio RTT while conversing
             s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
             send_listening_status();
         }
@@ -549,6 +551,7 @@ static void on_event(const lugo_event_t *ev) {
         s_turn_ending = false;
         s_state = APP_LISTENING;
         ws_client_set_reconnect(false);
+        wifi_sta_set_perf_mode(false);
         xQueueReset(s_pktq);   // flush any buffered downlink audio
         audio_spk_reset();
         opus_codec_reset();
@@ -690,6 +693,7 @@ static void idle_watchdog_task(void *arg) {
         if (idle_s >= (uint32_t)(to + 5)) {
             s_active = false;
             ws_client_set_reconnect(false);   // sleep the link too
+            wifi_sta_set_perf_mode(false);
             send_idle_status("Idle");
         }
     }

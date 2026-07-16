@@ -7,6 +7,9 @@
 #include <stdio.h>
 
 static const char *TAG = "ws";
+// Receive buffer: any single inbound frame (opus packet / JSON event / MCP
+// request) must fit or it arrives fragmented and is dropped (see on_ws).
+#define WS_BUF_SIZE 2048
 static esp_websocket_client_handle_t s_client;
 static ws_event_cb_t s_on_event;
 static ws_audio_cb_t s_on_audio;
@@ -40,9 +43,16 @@ static void on_ws(void *arg, esp_event_base_t base, int32_t id, void *data) {
     case WEBSOCKET_EVENT_ERROR:
         s_connected = false; ESP_LOGW(TAG, "ws error"); break;
     case WEBSOCKET_EVENT_DATA: {
-        // Only act on a complete frame delivered in a single event.
+        // Only act on a complete frame delivered in a single event. Frames
+        // larger than WS_BUF_SIZE arrive fragmented and are dropped — say so
+        // (once, on the first fragment) instead of failing silently.
         bool complete = (d->payload_offset == 0) && (d->data_len == d->payload_len);
-        if (!complete) break;
+        if (!complete) {
+            if (d->payload_offset == 0)
+                ESP_LOGW(TAG, "dropping fragmented ws frame (%d bytes > %d buffer)",
+                         d->payload_len, WS_BUF_SIZE);
+            break;
+        }
         if (d->op_code == 0x02) {            // binary = v3 frame (header + opus)
             uint8_t type; const uint8_t *payload; int plen;
             if (lugo_frame_decode((const uint8_t *)d->data_ptr, d->data_len,
@@ -134,7 +144,7 @@ esp_err_t ws_client_start(const char *host, int port, bool secure,
     esp_websocket_client_config_t wc = {
         .uri = uri, .network_timeout_ms = 10000,
         .disable_auto_reconnect = true,  // ws_conn_task drives connect/disconnect
-        .buffer_size = 2048,
+        .buffer_size = WS_BUF_SIZE,
         .task_stack = 8192,  // on_event() calls into display/i2s on this task
     };
     s_client = esp_websocket_client_init(&wc);
