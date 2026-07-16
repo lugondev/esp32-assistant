@@ -54,7 +54,9 @@
 // ============================================================
 const M = { NONE: 0, SHAKE: 1, BOUNCE: 2, OSCILLATE: 3 };
 const D = { NONE: 0, SWEAT: 1, TEAR: 2 };
-const DEC = { NONE: 0, MOUTH: 1, ZZZ: 2, WAVES: 3 };
+const DEC = { NONE: 0, MOUTH: 1, WAVES: 2 };
+// SLEEPY's "Z Z Z" is not a decor — it renders in-band next to the right
+// eye (see the sleepy branch in renderEyes), matching robot_eyes.c.
 
 const EMOTIONS = {
   neutral:     { l: [100,100,100,  0,  0, 0], blink: [3000,150] },
@@ -62,7 +64,7 @@ const EMOTIONS = {
   sad:         { l: [ 85, 90, 70, 20,-40, 0], blink: [3500,200] },
   surprised:   { l: [130,105,100,-15,  0, 0], blink: [3000,150], decor: DEC.WAVES },
   angry:       { l: [ 55, 95, 25,  0, 45, 0], blink: [3000,150] },
-  sleepy:      { l: [ 30, 90, 50, 25,  0, 0], blink: [3000,300], decor: DEC.ZZZ },
+  sleepy:      { l: [ 30, 90, 50, 25,  0, 0], blink: [3000,300], zzz: true },
   confused:    { l: [100,100,100,-15,-30, 0], r: [100,100,100,  0,  0, 0], blink: [3000,150], motion: M.SHAKE, amp: 5, tag: 'shake · asym' },
   suspicious:  { l: [ 50,100, 35,  6, 25, 0], r: [ 30,100, 45, 10,  0, 0], blink: [4000,200], tag: 'asym' },
   listening:   { l: [105,100,100,  0,  0, 0], blink: [5000,120], decor: DEC.WAVES, tag: 'state' },
@@ -214,16 +216,6 @@ function renderDecor(ctx, decor, W, H, t, fg) {
     let mh = open ? idiv(40 * r, 100) : idiv(12 * r, 100);
     if (mh < 1) mh = 1;
     fillRoundedRect(ctx, idiv(W, 2) - idiv(mw, 2), mid - idiv(mh, 2), mw, mh, idiv(mh, 2), fg);
-  } else if (decor === DEC.ZZZ) {
-    const bottom = cy + idiv(r * -145, 100);
-    const visible = idiv(t, 500) % 4;
-    const gs = Math.max(8, idiv(H, 14));   // glyph size scales with panel
-    ctx.fillStyle = fg;
-    ctx.font = `bold ${gs}px monospace`;
-    ctx.textBaseline = 'bottom';
-    for (let i = 0; i < Math.min(visible, 3); i++) {
-      ctx.fillText('Z', idiv(W * 3, 5) + i * (gs + 2), bottom - i * (gs - 2));
-    }
   } else if (decor === DEC.WAVES) {
     const top = cy + idiv(r * 145, 100), bandH = idiv(r * 50, 100);
     const bottom = top + bandH;
@@ -286,6 +278,19 @@ function renderEyes(ctx, W, H, t, name, eyeColor, bgColor, glowPct) {
   if (em.drop) {
     const bandBottom = cy0 + idiv(r * MAX_REACH_PCT, 100);
     renderDrop(ctx, em.drop, right.ex, right.ey, right.ew, right.eh, r, bandBottom, t, eyeColor);
+  }
+  if (em.zzz) {
+    // "Z Z Z" staircase hugging the right eye — same anchor as robot_eyes.c.
+    const visible = idiv(t, 500) % 4;
+    const gap = Math.max(1, idiv(r, 10));
+    const gs = H < 100 ? 7 : 9;   // glyph size ~ the C 5x7 / 8x8 glyphs
+    ctx.fillStyle = eyeColor;
+    ctx.font = `bold ${gs}px monospace`;
+    ctx.textBaseline = 'bottom';
+    const baseX = right.ex + idiv(2 * right.ew, 5);
+    for (let i = 0; i < Math.min(visible, 3); i++) {
+      ctx.fillText('Z', baseX + i * (gs + 1), right.ey - gap - i * (gs - 2));
+    }
   }
   if (em.decor) renderDecor(ctx, em.decor, W, H, t, eyeColor);
 }

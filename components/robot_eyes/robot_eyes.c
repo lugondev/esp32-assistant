@@ -234,6 +234,11 @@ static void render_drop(uint16_t *buf, int buf_w, int buf_rows, robot_drop_t dro
                        cx - dr, cy, cx + dr, cy, color);
 }
 
+// Defined with the other "Z Z Z" pieces further down; robot_eyes_render
+// calls it for SLEEPY to draw the cluster in-band, next to the right eye.
+static void render_zzz_cluster(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
+                                int bottom_y, int base_x, uint32_t now_ms, uint16_t fg);
+
 // Motion is a pure function of now_ms (square/triangle waves) — no RNG,
 // preserving this file's deterministic contract. dx/dy are pixel offsets;
 // dh_pct adds to height_pct before scaling.
@@ -342,13 +347,24 @@ void robot_eyes_render(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
         render_drop(buf, buf_w, buf_rows, em->drop, right_ex, right_ey,
                      right_ew, right_eh, r, band_bottom, now_ms, eye_color);
     }
+
+    // SLEEPY's "Z Z Z" hugs the right eye the same way the drops do —
+    // anchored a small gap above its top edge, staircase climbing up-right.
+    // Drawn whether the eye is open or closed (sleeping eyes are mostly
+    // closed; the Zs are what sells the state).
+    if (emotion == ROBOT_EMOTION_SLEEPY) {
+        int gap = r / 10;
+        if (gap < 1) gap = 1;
+        render_zzz_cluster(buf, buf_w, buf_rows, panel_h,
+                            right_ey - gap, right_ex + (2 * right_ew) / 5,
+                            now_ms, eye_color);
+    }
 }
 
 robot_decor_t robot_eyes_decor_for(robot_emotion_t emotion) {
     switch (emotion) {
     case ROBOT_EMOTION_HAPPY:     return ROBOT_DECOR_MOUTH;
     case ROBOT_EMOTION_LAUGHING:  return ROBOT_DECOR_MOUTH;
-    case ROBOT_EMOTION_SLEEPY:    return ROBOT_DECOR_ZZZ;
     // SURPRISED keeps WAVES for compatibility: main.c still uses it as its
     // "listening" state. Once the FSM adopts ROBOT_EMOTION_LISTENING,
     // consider dropping WAVES from SURPRISED.
@@ -368,12 +384,8 @@ robot_decor_t robot_eyes_decor_for(robot_emotion_t emotion) {
 // that 0.6r as 0.05r gap + 0.5r height + 0.05r trailing margin:
 //   MOUTH/WAVES: top = 1.45r (1.4r eyes reach + 0.05r gap), height = 0.5r
 //     -> ends at 1.95r, 0.05r inside the 2r bottom edge.
-//   ZZZ: symmetric on the top side — ends at -1.45r, height = 0.5r
-//     -> starts at -1.95r, 0.05r inside the 2r top edge.
 #define ROBOT_MOUTH_TOP_PCT    145
 #define ROBOT_MOUTH_HEIGHT_PCT  50
-#define ROBOT_ZZZ_BOTTOM_PCT  -145
-#define ROBOT_ZZZ_HEIGHT_PCT   50
 // WAVES shares MOUTH's band (below the eyes) — never a conflict, since
 // exactly one emotion (and so at most one decor) is active at a time.
 #define ROBOT_WAVES_TOP_PCT    145
@@ -386,24 +398,6 @@ void robot_eyes_decor_band(int panel_h, robot_decor_t decor, int *y, int *height
         *y = cy + (r * ROBOT_MOUTH_TOP_PCT) / 100;
         *height = (r * ROBOT_MOUTH_HEIGHT_PCT) / 100;
         break;
-    case ROBOT_DECOR_ZZZ: {
-        int bottom_edge = cy + (r * ROBOT_ZZZ_BOTTOM_PCT) / 100;
-        *height = (r * ROBOT_ZZZ_HEIGHT_PCT) / 100;
-        // On a small panel (e.g. a 128x64 SSD1306's ~52px eyes band) the
-        // percentage above gives a band shorter than one 'Z' glyph, so
-        // render_zzz's single bottommost glyph loses its top rows instead
-        // of just rendering smaller. Clamp to at least a full glyph.
-        if (*height < DISPLAY_FONT_GLYPH_HEIGHT) {
-            *height = DISPLAY_FONT_GLYPH_HEIGHT;
-            // The percentage-tuned gap above the eye leaves the clamped
-            // glyph sitting right at the panel's top edge with no visual
-            // gap left over the status bar — nudge it down a few px so it
-            // reads as "just above the eye" instead of stuck to the edge.
-            bottom_edge += 4;
-        }
-        *y = bottom_edge - *height;
-        break;
-    }
     case ROBOT_DECOR_WAVES:
         *y = cy + (r * ROBOT_WAVES_TOP_PCT) / 100;
         *height = (r * ROBOT_WAVES_HEIGHT_PCT) / 100;
@@ -438,7 +432,10 @@ static void render_mouth(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
 // Builds up to 3 "Z" glyphs (a diagonal staircase, smallest/topmost last)
 // over a repeating cycle, then resets to zero and builds again — a cheap,
 // discrete stand-in for a drifting/fading sleep animation (no alpha
-// blending available on this buffer).
+// blending available on this buffer). Drawn in-band by robot_eyes_render,
+// anchored just above the right eye's top edge — its previous life as a
+// decor band pinned it to the dirty band's top, a half-panel away from the
+// droopy sleepy eyes.
 #define ROBOT_ZZZ_STEP_MS 500u
 #define ROBOT_ZZZ_STEPS   4u   // 0,1,2,3 glyphs, then wraps back to 0
 
@@ -449,20 +446,16 @@ static void render_mouth(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
 #define ROBOT_ZZZ_COMPACT_GLYPH_W 5
 #define ROBOT_ZZZ_COMPACT_GLYPH_H 7
 
-static void render_zzz(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
-                        int y_offset, uint32_t now_ms, uint16_t fg, uint16_t bg) {
-    gfx_fill_rect(buf, buf_w, buf_rows, 0, 0, buf_w, buf_rows, bg);
-    int band_top, band_h;
-    robot_eyes_decor_band(panel_h, ROBOT_DECOR_ZZZ, &band_top, &band_h);
-    (void)band_h;
-    int local_bottom = band_top + band_h - y_offset;   // glyphs stack upward from here
-
+// bottom_y: the cluster's bottommost row (the first glyph's baseline);
+// base_x: the first (largest, lowest) glyph's left edge. The staircase
+// climbs up-right from there.
+static void render_zzz_cluster(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
+                                int bottom_y, int base_x, uint32_t now_ms, uint16_t fg) {
     bool compact = panel_h < ROBOT_ZZZ_COMPACT_PANEL_H;
     int gw = compact ? ROBOT_ZZZ_COMPACT_GLYPH_W : DISPLAY_FONT_GLYPH_WIDTH;
     int gh = compact ? ROBOT_ZZZ_COMPACT_GLYPH_H : DISPLAY_FONT_GLYPH_HEIGHT;
 
     unsigned visible = (unsigned)((now_ms / ROBOT_ZZZ_STEP_MS) % ROBOT_ZZZ_STEPS);
-    int base_x = (buf_w * 3) / 5;
     const uint8_t *glyph = display_font_glyph('Z');
     if (!glyph) return;
     uint8_t small[8];
@@ -472,7 +465,7 @@ static void render_zzz(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
     }
     for (unsigned i = 0; i < visible && i < 3; i++) {
         int gx = base_x + (int)i * (gw + 2);
-        int gy = local_bottom - gh - (int)i * (gh - 2);
+        int gy = bottom_y - gh - (int)i * (gh - 2);
         for (int row = 0; row < gh; row++) {
             uint8_t bits = glyph[row];
             for (int col = 0; col < gw; col++) {
@@ -523,9 +516,6 @@ void robot_eyes_render_decor(uint16_t *buf, int buf_w, int buf_rows, int panel_h
     switch (decor) {
     case ROBOT_DECOR_MOUTH:
         render_mouth(buf, buf_w, buf_rows, panel_h, y_offset, now_ms, fg_color, bg_color);
-        break;
-    case ROBOT_DECOR_ZZZ:
-        render_zzz(buf, buf_w, buf_rows, panel_h, y_offset, now_ms, fg_color, bg_color);
         break;
     case ROBOT_DECOR_WAVES:
         render_waves(buf, buf_w, buf_rows, panel_h, y_offset, now_ms, fg_color, bg_color);

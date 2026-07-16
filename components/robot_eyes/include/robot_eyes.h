@@ -124,14 +124,16 @@ void robot_eyes_render(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
 // Optional decorations, deliberately kept OUT of robot_eyes_dirty_band /
 // robot_eyes_render: only a few emotions have one, and folding any of them
 // into the always-rendered eye band would make every emotion pay the extra
-// SPI bytes for a mouth/"Zzz"/wave it never shows. A caller checks
+// SPI bytes for a mouth/wave it never shows. A caller checks
 // robot_eyes_decor_for(emotion) and only allocates/flushes the decor band
-// when it's not ROBOT_DECOR_NONE.
+// when it's not ROBOT_DECOR_NONE. (SLEEPY's "Z Z Z" used to be a decor up
+// here at the band's top edge, a half-panel away from the droopy sleepy
+// eyes — it's now drawn by robot_eyes_render itself, in-band, hugging the
+// right eye, the same way the sweat/tear drops are.)
 typedef enum {
     ROBOT_DECOR_NONE,
-    ROBOT_DECOR_MOUTH,   // HAPPY — an animated "talking" mouth below the eyes
-    ROBOT_DECOR_ZZZ,     // SLEEPY — a small building/resetting "Z Z Z" cluster
-    ROBOT_DECOR_WAVES,   // SURPRISED — animated equalizer-style listening bars
+    ROBOT_DECOR_MOUTH,   // HAPPY/LAUGHING — an animated "talking" mouth below the eyes
+    ROBOT_DECOR_WAVES,   // SURPRISED/LISTENING — animated equalizer-style listening bars
 } robot_decor_t;
 
 robot_decor_t robot_eyes_decor_for(robot_emotion_t emotion);

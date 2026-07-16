@@ -1,5 +1,4 @@
 #include "robot_eyes.h"
-#include "display_font.h"
 #include <stdio.h>
 
 static int failures = 0;
@@ -179,7 +178,10 @@ static void test_render_cropped_band_matches_full_panel_render(void) {
 static void test_decor_for_mapping(void) {
     CHECK(robot_eyes_decor_for(ROBOT_EMOTION_HAPPY) == ROBOT_DECOR_MOUTH);
     CHECK(robot_eyes_decor_for(ROBOT_EMOTION_LAUGHING) == ROBOT_DECOR_MOUTH);
-    CHECK(robot_eyes_decor_for(ROBOT_EMOTION_SLEEPY) == ROBOT_DECOR_ZZZ);
+    // SLEEPY's Zzz is drawn in-band next to the eye (like drops), not as a
+    // decor band — the old ZZZ decor floated a full half-panel above the
+    // droopy sleepy eyes.
+    CHECK(robot_eyes_decor_for(ROBOT_EMOTION_SLEEPY) == ROBOT_DECOR_NONE);
     CHECK(robot_eyes_decor_for(ROBOT_EMOTION_SURPRISED) == ROBOT_DECOR_WAVES);
     CHECK(robot_eyes_decor_for(ROBOT_EMOTION_LISTENING) == ROBOT_DECOR_WAVES);
     // representatives of the no-decor emotions
@@ -242,34 +244,6 @@ static void test_decor_bands_fit_within_the_real_panel(void) {
     robot_eyes_decor_band(DEVICE_EYES_H, ROBOT_DECOR_WAVES, &y, &height);
     CHECK(y >= 0);
     CHECK(y + height <= DEVICE_EYES_H);
-
-    robot_eyes_decor_band(DEVICE_EYES_H, ROBOT_DECOR_ZZZ, &y, &height);
-    CHECK(y >= 0);
-    CHECK(y + height <= DEVICE_EYES_H);
-}
-
-// A 128x64 SSD1306 with a 12px status bar leaves eyes_h=52 — far smaller
-// than the 240x216 ST7789 the percentages above were tuned against. At this
-// scale the naive percentage math gives ZZZ a band shorter than a single
-// font glyph (confirmed: 6px band vs an 8px-tall 'Z'), so every Z silently
-// loses its top 2 rows instead of just rendering smaller. render_zzz stacks
-// glyphs from the band's bottom upward, so the band must be at least one
-// glyph tall for the first (bottommost, i=0) Z to render uncropped.
-#define SMALL_PANEL_EYES_H 52
-
-static void test_zzz_band_fits_a_full_glyph_on_a_small_panel(void) {
-    int y, height;
-    robot_eyes_decor_band(SMALL_PANEL_EYES_H, ROBOT_DECOR_ZZZ, &y, &height);
-    CHECK(height >= DISPLAY_FONT_GLYPH_HEIGHT);
-    CHECK(y >= 0);
-    CHECK(y + height <= SMALL_PANEL_EYES_H);
-}
-
-static void test_decor_band_zzz_is_above_eye_center(void) {
-    int y, height;
-    robot_eyes_decor_band(H, ROBOT_DECOR_ZZZ, &y, &height);
-    CHECK(y + height <= H / 2);   // fully above panel center
-    CHECK(height > 0);
 }
 
 static void test_render_decor_mouth_paints_something(void) {
@@ -292,36 +266,23 @@ static void test_render_decor_mouth_animates_open_and_closed(void) {
     CHECK(count_a != count_b);
 }
 
-static void test_render_decor_zzz_builds_up_then_resets(void) {
-    // The "Z Z Z" cluster should show more glyphs later in its cycle than
-    // at the very start, then reset — check growth across the first part
-    // of one cycle rather than an exact glyph count (implementation detail).
-    robot_eyes_render_decor(buf, W, H, H, 0, 0, ROBOT_DECOR_ZZZ, EYE, BG);
-    int count_a = 0;
-    for (int i = 0; i < W * H; i++) if (buf[i] == EYE) count_a++;
-    robot_eyes_render_decor(buf, W, H, H, 0, 1000, ROBOT_DECOR_ZZZ, EYE, BG);
-    int count_b = 0;
-    for (int i = 0; i < W * H; i++) if (buf[i] == EYE) count_b++;
-    CHECK(count_b > count_a);
-}
-
 static void test_is_closed_for_neutral_matches_legacy(void) {
     for (uint32_t t = 0; t < 6200; t += 37)
         CHECK(robot_eyes_is_closed(t) == robot_eyes_is_closed_for(ROBOT_EMOTION_NEUTRAL, t));
 }
 
 static void test_per_emotion_blink_schedules(void) {
-    // BORED: 7000/400 — chậm, nhắm lâu
+    // BORED: 7000/400 — slow, stays closed long
     CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_BORED, 0) == true);
     CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_BORED, 399) == true);
     CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_BORED, 400) == false);
     CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_BORED, 6999) == false);
     CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_BORED, 7000) == true);
-    // ANXIOUS: 1400/100 — nhanh
+    // ANXIOUS: 1400/100 — fast
     CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_ANXIOUS, 99) == true);
     CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_ANXIOUS, 100) == false);
     CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_ANXIOUS, 1400) == true);
-    // SQUINT: 9000/150 — gần như không chớp
+    // SQUINT: 9000/150 — hardly ever blinks
     CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_SQUINT, 150) == false);
     CHECK(robot_eyes_is_closed_for(ROBOT_EMOTION_SQUINT, 8999) == false);
 }
@@ -469,6 +430,30 @@ static void test_asym_emotions_differ_between_eyes(void) {
     }
 }
 
+static void test_sleepy_zzz_builds_near_the_eye(void) {
+    // t=400 → 0 'Z' glyphs; t=1600 → 3 glyphs (500ms steps, %4). Both
+    // instants have identical, open eyes (blink 3000/300), so every pixel
+    // that differs IS the Z cluster — and it must sit close to the sleepy
+    // eye (within ~1.25r above its center, on the right half), not up at
+    // the dirty band's top edge like the removed ZZZ decor did.
+    static uint16_t none[DW * DH], three[DW * DH];
+    robot_eyes_render(none,  DW, DH, DH, 0,  400, ROBOT_EMOTION_SLEEPY, EYE, BG);
+    robot_eyes_render(three, DW, DH, DH, 0, 1600, ROBOT_EMOTION_SLEEPY, EYE, BG);
+    int r = DH / 4;
+    int eye_cy = DH / 2 + (r * 25) / 100;   // SLEEPY's y_shift_pct = 25
+    int diff = 0;
+    for (int y = 0; y < DH; y++) {
+        for (int x = 0; x < DW; x++) {
+            if (none[y * DW + x] == three[y * DW + x]) continue;
+            diff++;
+            CHECK(x >= DW / 2 - 5);                 // near the RIGHT eye
+            CHECK(y >= eye_cy - (5 * r) / 4);       // no higher than 1.25r above it
+            CHECK(y < eye_cy);                      // strictly above the eye center
+        }
+    }
+    CHECK(diff > 0);   // the cluster actually appeared
+}
+
 static void test_glow_pct_default_and_clamp(void) {
     CHECK(robot_eyes_glow_pct() == ROBOT_EYES_GLOW_PCT_DEFAULT);
     robot_eyes_set_glow_pct(50);
@@ -507,13 +492,10 @@ int main(void) {
     test_render_cropped_band_matches_full_panel_render();
     test_decor_for_mapping();
     test_decor_band_mouth_is_below_eye_center();
-    test_decor_band_zzz_is_above_eye_center();
     test_decor_bands_fit_within_the_real_panel();
-    test_zzz_band_fits_a_full_glyph_on_a_small_panel();
     test_decor_band_waves_is_below_eye_center();
     test_render_decor_mouth_paints_something();
     test_render_decor_mouth_animates_open_and_closed();
-    test_render_decor_zzz_builds_up_then_resets();
     test_render_decor_waves_paints_something();
     test_render_decor_waves_animates_over_time();
     test_is_closed_for_neutral_matches_legacy();
@@ -526,6 +508,7 @@ int main(void) {
     test_motion_emotions_animate_while_open();
     test_sweat_drop_pulses();
     test_tear_slides_down_over_time();
+    test_sleepy_zzz_builds_near_the_eye();
     test_glow_pct_default_and_clamp();
     test_glow_zero_disables_the_halo();
     if (failures) { printf("%d FAILURES\n", failures); return 1; }
