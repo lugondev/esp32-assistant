@@ -9,7 +9,7 @@ button logic. **Not** useful for voice — see [Limitations](#limitations).
 | File | Purpose |
 |---|---|
 | `wokwi.toml` | Points Wokwi at `build-wokwi/` (a separate build dir from real-hardware `build/`) and registers the two custom chips. |
-| `diagram.json` | Wiring: ESP32-S3-DevKitC-1 + SSD1306 OLED (I2C) + INMP441/MAX98357A pin stubs + 3 buttons. |
+| `diagram.json` | Wiring: ESP32-S3-DevKitC-1 + SSD1306 OLED (I2C) + INMP441/MAX98357A pin stubs + 4 buttons (wake/vol-up/vol-down/emotion), each active-low to GND against the firmware's internal pull-up. |
 | `sdkconfig.wokwi` | Wokwi-only Kconfig overrides, layered on top of `sdkconfig.defaults(.esp32s3)`. Never used for real hardware. |
 | `inmp441.chip.c` / `.chip.json` | Custom-chip pin stub for the mic. Carries correct pin names so wiring renders; logs once when WS starts toggling. No real I2S decode (Wokwi's chip API doesn't support it). |
 | `max98357a.chip.c` / `.chip.json` | Same, for the speaker. |

@@ -51,6 +51,13 @@
       "top": 380,
       "left": 200,
       "attrs": { "color": "blue" }
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn_emotion",
+      "top": 380,
+      "left": 300,
+      "attrs": { "color": "yellow" }
     }
   ],
   "connections": [
@@ -78,6 +85,8 @@
     ["btn_volup:2.l", "esp:GND.4", "black", ["v0"]],
     ["esp:39", "btn_voldown:1.l", "blue", ["h0"]],
     ["btn_voldown:2.l", "esp:GND.4", "black", ["v0"]],
+    ["esp:46", "btn_emotion:1.l", "yellow", ["h0"]],
+    ["btn_emotion:2.l", "esp:GND.4", "black", ["v0"]],
 
     ["esp:TX", "$serialMonitor:RX", "", []],
     ["esp:RX", "$serialMonitor:TX", "", []]
