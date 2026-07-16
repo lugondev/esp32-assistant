@@ -327,8 +327,13 @@ void robot_eyes_render(uint16_t *buf, int buf_w, int buf_rows, int panel_h,
 robot_decor_t robot_eyes_decor_for(robot_emotion_t emotion) {
     switch (emotion) {
     case ROBOT_EMOTION_HAPPY:     return ROBOT_DECOR_MOUTH;
+    case ROBOT_EMOTION_LAUGHING:  return ROBOT_DECOR_MOUTH;
     case ROBOT_EMOTION_SLEEPY:    return ROBOT_DECOR_ZZZ;
+    // SURPRISED keeps WAVES for compatibility: main.c still uses it as its
+    // "listening" state. Once the FSM adopts ROBOT_EMOTION_LISTENING,
+    // consider dropping WAVES from SURPRISED.
     case ROBOT_EMOTION_SURPRISED: return ROBOT_DECOR_WAVES;
+    case ROBOT_EMOTION_LISTENING: return ROBOT_DECOR_WAVES;
     default:                      return ROBOT_DECOR_NONE;
     }
 }

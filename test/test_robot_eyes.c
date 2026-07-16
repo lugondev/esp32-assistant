@@ -176,15 +176,21 @@ static void test_render_cropped_band_matches_full_panel_render(void) {
     }
 }
 
-static void test_decor_for_maps_happy_sleepy_and_surprised_only(void) {
+static void test_decor_for_mapping(void) {
     CHECK(robot_eyes_decor_for(ROBOT_EMOTION_HAPPY) == ROBOT_DECOR_MOUTH);
+    CHECK(robot_eyes_decor_for(ROBOT_EMOTION_LAUGHING) == ROBOT_DECOR_MOUTH);
     CHECK(robot_eyes_decor_for(ROBOT_EMOTION_SLEEPY) == ROBOT_DECOR_ZZZ);
     CHECK(robot_eyes_decor_for(ROBOT_EMOTION_SURPRISED) == ROBOT_DECOR_WAVES);
+    CHECK(robot_eyes_decor_for(ROBOT_EMOTION_LISTENING) == ROBOT_DECOR_WAVES);
+    // representatives of the no-decor emotions
     CHECK(robot_eyes_decor_for(ROBOT_EMOTION_NEUTRAL) == ROBOT_DECOR_NONE);
     CHECK(robot_eyes_decor_for(ROBOT_EMOTION_SAD) == ROBOT_DECOR_NONE);
     CHECK(robot_eyes_decor_for(ROBOT_EMOTION_ANGRY) == ROBOT_DECOR_NONE);
     CHECK(robot_eyes_decor_for(ROBOT_EMOTION_CONFUSED) == ROBOT_DECOR_NONE);
     CHECK(robot_eyes_decor_for(ROBOT_EMOTION_SUSPICIOUS) == ROBOT_DECOR_NONE);
+    CHECK(robot_eyes_decor_for(ROBOT_EMOTION_GLEE) == ROBOT_DECOR_NONE);
+    CHECK(robot_eyes_decor_for(ROBOT_EMOTION_CRYING) == ROBOT_DECOR_NONE);
+    CHECK(robot_eyes_decor_for(ROBOT_EMOTION_SQUINT) == ROBOT_DECOR_NONE);
 }
 
 static void test_decor_band_waves_is_below_eye_center(void) {
@@ -477,7 +483,7 @@ int main(void) {
     test_render_open_glow_stays_bounded();
     test_render_device_aspect_eyes_dont_touch_or_clip();
     test_render_cropped_band_matches_full_panel_render();
-    test_decor_for_maps_happy_sleepy_and_surprised_only();
+    test_decor_for_mapping();
     test_decor_band_mouth_is_below_eye_center();
     test_decor_band_zzz_is_above_eye_center();
     test_decor_bands_fit_within_the_real_panel();
