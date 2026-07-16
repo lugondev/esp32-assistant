@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="vi">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <title>robot_eyes — 28-state emotion preview</title>
@@ -25,14 +25,14 @@
 </head>
 <body>
 <h1>robot_eyes — 28 emotion states</h1>
-<div class="sub">Port trung thực của <code>components/robot_eyes/robot_eyes.c</code> — dùng để duyệt/tinh chỉnh trước khi nạp board. Click một ô để phóng to.</div>
+<div class="sub">Faithful port of <code>components/robot_eyes/robot_eyes.c</code> — use it to review/tune the animations before flashing the board. Click a cell to zoom.</div>
 
 <div class="controls">
-  <label>Màu mắt <input type="color" id="eyecolor" value="#00e5ff"></label>
+  <label>Eye color <input type="color" id="eyecolor" value="#00e5ff"></label>
   <label>Panel
     <select id="preset">
-      <option value="240x216" selected>240×216 (ST7789, trừ status bar)</option>
-      <option value="128x52">128×52 (SSD1306, trừ status bar)</option>
+      <option value="240x216" selected>240×216 (ST7789, minus status bar)</option>
+      <option value="128x52">128×52 (SSD1306, minus status bar)</option>
     </select>
   </label>
 </div>
@@ -308,7 +308,7 @@ for (const [title, names] of GROUPS) {
     cell.onclick = () => {
       zoomed = name;
       document.getElementById('zoomwrap').classList.add('show');
-      document.getElementById('zoomlabel').textContent = 'Zoom: ' + name + ' — click ô khác để đổi';
+      document.getElementById('zoomlabel').textContent = 'Zoom: ' + name + ' — click another cell to switch';
       window.scrollTo({ top: 0, behavior: 'smooth' });
     };
     grid.appendChild(cell);

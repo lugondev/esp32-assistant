@@ -1,31 +1,33 @@
 # Emotion System — 28-state robot eyes animation
 
 **Date:** 2026-07-16
-**Status:** Approved design, pending implementation plan
+**Status:** Implemented (merged to main)
 
 ## Goal
 
-Mở rộng component `robot_eyes` từ 8 emotion lên **28 emotion state** (7 nhóm cảm xúc)
-theo reference image + spec của người dùng, kèm một trang HTML preview để duyệt
-animation trên browser trước khi nạp board.
+Expand the `robot_eyes` component from 8 to **28 emotion states** (7 emotion
+groups) per the user's reference image + spec, plus an HTML preview page for
+reviewing the animations in a browser before flashing the board.
 
-Nguyên tắc giữ nguyên từ code hiện tại:
+Principles carried over from the existing code:
 
-- **Parametric, không bitmap** — mỗi emotion là một bộ tham số trên cùng một shape
-  engine (squircle + glow + wedge), không phải frame ảnh riêng.
-- **Pure function of `now_ms`** — không RNG, không mutable state; cùng `now_ms`
-  luôn cho cùng frame. Host-testable, không đụng hardware.
-- **Backward compatible** — 8 giá trị enum hiện có giữ nguyên tên và thứ tự;
-  `main.c` không phải sửa trong đợt này.
+- **Parametric, not bitmaps** — each emotion is a parameter set on top of one
+  shared shape engine (squircle + glow + wedge), not a per-emotion frame.
+- **Pure function of `now_ms`** — no RNG, no mutable state; the same `now_ms`
+  always yields the same frame. Host-testable, no hardware access.
+- **Backward compatible** — the 8 existing enum values keep their names and
+  order; `main.c` needs no changes in this round.
 
-## Non-goals (đợt sau)
+## Non-goals (later rounds)
 
-- Map 28 state mới vào FSM / MCP tools / `main.c` (các call site cũ vẫn chạy).
-- Transition/tween giữa hai emotion (hiện tại chuyển cắt cứng, giữ nguyên).
+- Mapping the 28 new states into the FSM / MCP tools / `main.c` (existing call
+  sites keep working).
+- Emotion-to-emotion transitions/tweening (currently a hard cut; unchanged).
 
 ## 1. Enum
 
-Giữ nguyên 8 giá trị đầu, thêm 20 giá trị mới **phía sau** (không chen giữa):
+Keep the first 8 values unchanged, append 20 new values **after** them (never
+in between):
 
 ```c
 typedef enum {
@@ -53,45 +55,53 @@ typedef enum {
 } robot_emotion_t;
 ```
 
-## 2. Tham số per-eye (mở rộng `eye_params_t`)
+## 2. Per-eye parameters (extended `eye_params_t`)
 
-Trường hiện có: `height_pct, width_pct, corner_pct, y_shift_pct, brow_slant_pct`.
+Existing fields: `height_pct, width_pct, corner_pct, y_shift_pct, brow_slant_pct`.
 
-Trường mới:
+New field:
 
-- **`bottom_cut_pct`** (0–100): sau khi vẽ squircle + glow, phủ một dải nền lên
-  phần đáy mắt cao `bottom_cut_pct%` chiều cao mắt → tạo hình "vòm cong hở đáy"
-  cho họ happy/laughing/glee. 0 = không cắt (mọi emotion cũ). Dải cắt phủ luôn
-  cả glow trong vùng đó để vòm đọc rõ trên nền đen.
+- **`bottom_cut_pct`** (0–100): after drawing the squircle + glow, cover the
+  bottom `bottom_cut_pct%` of the eye's height with background → produces the
+  "open-bottomed arc" shape for the happy/laughing/glee family that the
+  current squircle cannot express. 0 = no cut (all pre-existing emotions).
+  The cut also covers the glow in that region so the arc reads cleanly on a
+  black background.
 
-## 3. Tham số per-emotion (struct `emotion_params_t` mở rộng)
+## 3. Per-emotion parameters (extended `emotion_params_t`)
 
-- **`blink_interval_ms`, `blink_duration_ms`** — lịch chớp mắt riêng từng emotion.
-  API mới `bool robot_eyes_is_closed_for(robot_emotion_t e, uint32_t now_ms)`.
-  Hàm cũ `robot_eyes_is_closed(now_ms)` giữ nguyên, tương đương gọi cho NEUTRAL
-  (NEUTRAL giữ đúng 3000/150 như hai constant hiện có — test cũ không vỡ).
-- **`motion`** — `ROBOT_MOTION_NONE / SHAKE / BOUNCE / OSCILLATE` + `motion_amp_pct`:
-  - `SHAKE`: offset **x** dạng sóng vuông ±amp (amp = % của `r`), chu kỳ 120 ms.
-    Dùng cho FRUSTRATED, CONFUSED.
-  - `BOUNCE`: offset **y** sóng tam giác 0→−amp→0, chu kỳ 600 ms. Dùng cho GLEE.
-  - `OSCILLATE`: modulate `height_pct` ±amp% sóng tam giác, chu kỳ 250 ms
-    ("dao động nhanh" của LAUGHING).
-  - Mọi motion đều là hàm thuần của `now_ms` (triangle/square wave), không RNG.
-- **`drop`** — `ROBOT_DROP_NONE / SWEAT / TEAR`, vẽ **bên trong band mắt**
-  (không thêm decor band mới, không tốn thêm SPI):
-  - `SWEAT`: giọt nhỏ (circle + wedge nhọn phía trên, `gfx_fill_circle` +
-    `gfx_fill_triangle`) ở góc ngoài-trên mắt **phải** (theo reference image),
-    nhấp nháy hiện/ẩn chu kỳ ~800 ms. Dùng cho NERVOUS, ANXIOUS.
-  - `TEAR`: giọt trượt từ mép dưới mắt phải xuống theo sóng răng cưa chu kỳ
-    ~1200 ms rồi reset (đứng yên là lạ hơn chuyển động). Dùng cho CRYING.
+- **`blink_interval_ms`, `blink_duration_ms`** — a blink schedule per emotion.
+  New API `bool robot_eyes_is_closed_for(robot_emotion_t e, uint32_t now_ms)`.
+  The old `robot_eyes_is_closed(now_ms)` stays, equivalent to calling the new
+  function with NEUTRAL (NEUTRAL keeps exactly 3000/150 via the two existing
+  constants — old tests don't break).
+- **`motion`** — `ROBOT_MOTION_NONE / SHAKE / BOUNCE / OSCILLATE` plus
+  `motion_amp_pct`:
+  - `SHAKE`: **x** offset as a square wave ±amp (amp = % of `r`), 120 ms
+    period. Used by FRUSTRATED, CONFUSED.
+  - `BOUNCE`: **y** offset as a triangle wave 0→−amp→0, 600 ms period. Used
+    by GLEE.
+  - `OSCILLATE`: modulates `height_pct` ±amp% as a triangle wave, 250 ms
+    period (LAUGHING's "fast wobble" / the sheet's `40w` tag).
+  - All motion is a pure function of `now_ms` (triangle/square waves), no RNG.
+- **`drop`** — `ROBOT_DROP_NONE / SWEAT / TEAR`, drawn **inside the eyes
+  band** (no new decor band, no extra SPI cost):
+  - `SWEAT`: a small drop (circle + pointed wedge above it, via
+    `gfx_fill_circle` + `gfx_fill_triangle`) at the **right** eye's top-outer
+    corner (per the reference image), pulsing on/off on a ~800 ms cycle.
+    Used by NERVOUS, ANXIOUS.
+  - `TEAR`: a drop sliding from just under the right eye downward on a
+    ~1200 ms sawtooth, then resetting (a static tear looks stranger than a
+    moving one). Used by CRYING.
 
-## 4. Bảng 28 emotion
+## 4. The 28-emotion table
 
-Giá trị là lựa chọn sáng tạo của project (tinh chỉnh bằng mắt qua HTML preview),
-bám mô tả spec; cột trái/phải chỉ khác nhau ở các emotion `asym`. Ký hiệu:
-`H/W/C/Y/B/Cut` = height/width/corner/y_shift/brow_slant/bottom_cut (pct).
+Values are this project's own creative choices (tuned by eye via the HTML
+preview), following the spec's descriptions; the left/right columns differ
+only for the `asym` emotions. Notation: `H/W/C/Y/B/Cut` =
+height/width/corner/y_shift/brow_slant/bottom_cut (pct).
 
-| Emotion | Trái H/W/C/Y/B/Cut | Phải (nếu khác) | Blink (ms) | Motion | Drop | Decor |
+| Emotion | Left H/W/C/Y/B/Cut | Right (if different) | Blink (ms) | Motion | Drop | Decor |
 |---|---|---|---|---|---|---|
 | NEUTRAL | 100/100/100/0/0/0 | — | 3000/150 | — | — | — |
 | LISTENING | 105/100/100/0/0/0 | — | 5000/120 | — | — | WAVES |
@@ -122,61 +132,70 @@ bám mô tả spec; cột trái/phải chỉ khác nhau ở các emotion `asym`.
 | SQUINT | 18/100/30/0/0/0 | — | 9000/150 | — | — | — |
 | CONFUSED | 100/100/100/−15/−30/0 | 100/100/100/0/0/0 | 3000/150 | SHAKE 5 | — | — |
 
-\* SURPRISED giữ decor WAVES để tương thích với `main.c` hiện tại (đang dùng
-SURPRISED làm trạng thái "đang nghe"); khi FSM chuyển sang LISTENING ở đợt sau,
-cân nhắc bỏ WAVES khỏi SURPRISED.
+\* SURPRISED keeps the WAVES decor for compatibility with the current
+`main.c` (which uses SURPRISED as its "listening" state); once the FSM
+switches to LISTENING in a later round, consider dropping WAVES from
+SURPRISED.
 
-SUSPICIOUS đổi từ đối xứng sang asym theo reference image (tinh chỉnh giá trị
-cũ là hợp lệ — bảng là creative choice, không phải API).
+SUSPICIOUS changed from symmetric to asym per the reference image (retuning
+the old values is legitimate — the table is a creative choice, not an API).
 
-## 5. Ràng buộc dirty band (invariant quan trọng nhất)
+## 5. Dirty-band constraint (the most important invariant)
 
-`ROBOT_EYES_MAX_REACH_PCT = 140` **giữ nguyên** — decor band bắt đầu tại 1.45r
-nên band mắt không được vượt 1.4r. Mọi entry trong bảng phải thỏa:
+`ROBOT_EYES_MAX_REACH_PCT = 140` **stays unchanged** — the decor bands start
+at 1.45r, so the eyes band must not exceed 1.4r. Every table entry must
+satisfy:
 
 ```
-0.8 * height_pct(+osc amp nếu OSCILLATE) + |y_shift_pct| + bounce_amp + 20 (glow) ≤ 140
+0.8 * height_pct(+osc amp if OSCILLATE) + |y_shift_pct| + bounce_amp + 20 (glow) ≤ 140
 ```
 
-Worst case bảng trên: SHOCKED = 0.8·135 + 10 + 20 = 138 ✓;
-SURPRISED = 104 + 15 + 20 = 139 ✓ (như hiện tại);
+Worst cases in the table above: SHOCKED = 0.8·135 + 10 + 20 = 138 ✓;
+SURPRISED = 104 + 15 + 20 = 139 ✓ (same as today);
 LAUGHING (osc) = 0.8·(60+15) + 8 + 20 = 88 ✓; GLEE (bounce) = 40+10+8+20 = 78 ✓.
-SHAKE chỉ offset ngang, không ảnh hưởng band dọc. Giọt SWEAT/TEAR phải nằm
-trong band (kiểm bằng test). **Test mới enforce công thức này cho cả 28 entry**
-— thêm emotion vượt ngưỡng sẽ fail test thay vì clip lặng lẽ trên màn hình.
+SHAKE only offsets horizontally and doesn't affect the vertical band. The
+SWEAT/TEAR drops must stay inside the band (checked by test). **A new test
+enforces this formula for all 28 entries** — an emotion exceeding the limit
+fails the test instead of silently clipping on screen.
 
 ## 6. Decor
 
-Hệ decor (`MOUTH/ZZZ/WAVES`) giữ nguyên cơ chế band riêng. `robot_eyes_decor_for`
-mở rộng theo cột Decor ở bảng trên. SWEAT/TEAR **không** phải decor — vẽ in-band.
+The decor system (`MOUTH/ZZZ/WAVES`) keeps its separate-band mechanism.
+`robot_eyes_decor_for` is extended per the Decor column of the table above.
+SWEAT/TEAR are **not** decor — they are drawn in-band.
 
 ## 7. HTML preview — `tools/emotions-preview.html`
 
-- Một file tự chứa (không CDN), canvas 2D, port trung thực logic C sang JS:
-  cùng bảng tham số, cùng công thức hình học/blink/motion/drop.
-- Grid 28 ô chạy animation đồng thời (bố cục giống reference image, kèm nhãn
-  tên + tag `asym/shake/sweat/state`), click một ô để phóng to, control chỉnh
-  màu mắt / tỉ lệ panel (240×240 ST7789 vs 128×64 SSD1306).
-- Bảng JS chép tay từ bảng C, đánh dấu comment `// KEEP IN SYNC with
-  robot_eyes.c EMOTIONS[]` ở cả hai phía. Chấp nhận sync thủ công (một nguồn
-  sinh hai bảng là over-engineering cho một dev tool).
+- A single self-contained file (no CDNs), 2D canvas, faithful JS port of the
+  C logic: same parameter table, same geometry/blink/motion/drop formulas.
+- A grid of 28 cells all animating simultaneously (layout mirroring the
+  reference image, with name labels + `asym/shake/sweat/state` tags), click a
+  cell to zoom it, controls for eye color / panel aspect (240×240 ST7789 vs
+  128×64 SSD1306).
+- The JS table is hand-copied from the C table, marked with a
+  `// KEEP IN SYNC with robot_eyes.c EMOTIONS[]` comment on both sides.
+  Manual sync is acceptable (generating both tables from one source is
+  over-engineering for a dev tool).
 
-## 8. Testing (host, `test/test_robot_eyes.c` mở rộng)
+## 8. Testing (host, extending `test/test_robot_eyes.c`)
 
-1. Bảng đủ `ROBOT_EMOTION_COUNT` entry, không entry nào toàn 0.
-2. Band-fit: render cả 28 emotion tại nhiều `now_ms` (phủ đủ pha blink, shake,
-   bounce, osc, tear-slide) vào buffer đúng bằng dirty band + 1 hàng canary
-   trên/dưới — canary không bao giờ bị vẽ.
+1. The table has all `ROBOT_EMOTION_COUNT` entries, none of them all-zero.
+2. Band fit: render all 28 emotions at multiple `now_ms` values (covering
+   blink, shake, bounce, osc, tear-slide phases) into a buffer sized exactly
+   to the dirty band plus canary rows above/below — the canaries must never
+   be painted.
 3. Blink: `robot_eyes_is_closed(t) == robot_eyes_is_closed_for(NEUTRAL, t)`;
-   lịch riêng của vài emotion (BORED chậm, ANXIOUS nhanh, SQUINT hiếm) đúng
-   interval/duration.
-4. Determinism: hai lần render cùng `(emotion, now_ms)` cho buffer giống hệt.
-5. Asym: SKEPTICAL/SUSPICIOUS/ANNOYED/UNIMPRESSED render hai nửa trái/phải
-   khác nhau; các emotion mirror thì đối xứng gương (trừ drop/wedge).
-6. Decor mapping mới (LISTENING→WAVES) và cũ không đổi.
+   spot-check a few per-emotion schedules (BORED slow, ANXIOUS fast, SQUINT
+   rare) for correct interval/duration.
+4. Determinism: two renders of the same `(emotion, now_ms)` produce identical
+   buffers.
+5. Asym: SKEPTICAL/SUSPICIOUS/ANNOYED/UNIMPRESSED render different left/right
+   halves; mirrored emotions stay mirror-symmetric (drop/wedge aside).
+6. New decor mapping (LISTENING→WAVES) plus the old mapping unchanged.
 
-## 9. Những gì KHÔNG đổi
+## 9. What does NOT change
 
-- Chữ ký `robot_eyes_render`, `robot_eyes_dirty_band`, toàn bộ API decor.
-- Hai constant blink cũ (thành default/NEUTRAL).
-- `main.c`, FSM, MCP tools.
+- The signatures of `robot_eyes_render`, `robot_eyes_dirty_band`, and the
+  entire decor API.
+- The two old blink constants (they become the default/NEUTRAL schedule).
+- `main.c`, the FSM, MCP tools.
