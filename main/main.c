@@ -14,10 +14,13 @@
 #include "audio.h"
 #include "opus_codec.h"
 #include "mcp_tools.h"
+#include "pairing.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
 #include "esp_random.h"
+#include "esp_mac.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -40,6 +43,30 @@
 #endif
 
 static const char *TAG = "app";
+
+// Loaded once at boot (wifi_cfg_load) and never mutated again; file-scope so
+// resolve_device_token() can reach server_host/server_port without threading
+// app_main's local through every caller.
+static wifi_cfg_t s_cfg;
+
+// Resolved by resolve_device_token(): CONFIG_AA_DEVICE_TOKEN override, else
+// the NVS-stored per-device token, else whatever aa_run_pairing() just
+// claimed (which also persists it to NVS itself).
+static char s_device_token[128];
+
+// GOODBYE reason text (e.g. "account_disabled"), captured by on_event() for
+// aa_classify_disconnect() to inspect after the session ends. Reset both
+// right after use (goodbye handling) and at the start of every new session
+// (WELCOME) so a stale reason from an earlier session can never cause a
+// false-positive repair classification on a later, unrelated disconnect.
+static char s_last_goodbye_reason[64];
+
+// Set by on_event()'s GOODBYE case when aa_classify_disconnect() says REPAIR.
+// on_event() runs on the ws client's own task and must never block or touch
+// the display directly (see the isolation note above status_task), so it
+// only raises this flag; idle_watchdog_task (a normal, blockable task)
+// services it.
+static volatile bool s_repair_pending = false;
 
 typedef enum { APP_CONNECTING, APP_LISTENING, APP_SPEAKING } app_state_t;
 // s_state gates the half-duplex mic (mic_task streams only in APP_LISTENING) and
@@ -411,6 +438,75 @@ static void send_listening_status(void) {
     xQueueSend(s_status_q, &m, 0);
 }
 
+// aa_run_pairing's show callback. Routed through s_status_q rather than a
+// direct display_show() -- resolve_device_token() can run well after
+// status_task has started (both at boot, right before ws_client_start, and
+// later from idle_watchdog_task after a revoke), so it must obey the same
+// "only status_task touches the panel" rule as everything else here.
+static void show_pair_code(const char *code) {
+    status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = false };
+    strncpy(m.line1, "Pair code", sizeof(m.line1) - 1);
+    strncpy(m.line2, code, sizeof(m.line2) - 1);
+    xQueueSend(s_status_q, &m, 0);
+}
+
+// Resolves the token ws_client_start() connects with, in priority order:
+//   1) CONFIG_AA_DEVICE_TOKEN -- a static dev/legacy override. Used verbatim;
+//      pairing is skipped entirely. IMPORTANT: this value can never be wiped
+//      or re-paired by the revoke handling below (there is nothing in NVS to
+//      clear, and re-pairing would mint a per-device token the override
+//      would just keep shadowing) -- see the override guards in on_event's
+//      GOODBYE case and idle_watchdog_task.
+//   2) a per-device token already claimed and stored in NVS.
+//   3) aa_run_pairing(): blocks (HTTP poll loop) until an operator claims the
+//      code shown via show_pair_code(); persists the token to NVS itself.
+static const char *resolve_device_token(void) {
+    if (CONFIG_AA_DEVICE_TOKEN[0] != '\0') {
+        snprintf(s_device_token, sizeof s_device_token, "%s", CONFIG_AA_DEVICE_TOKEN);
+        return s_device_token;
+    }
+    if (aa_load_device_token(s_device_token, sizeof s_device_token) > 0)
+        return s_device_token;
+
+    uint8_t mac[6];
+    esp_efuse_mac_get_default(mac);
+    char serial[13];
+    aa_format_serial(mac, serial);
+    // Sized for the worst case GCC's -Werror=format-truncation can statically
+    // see: s_cfg.server_host is a fixed char[WIFI_CFG_HOST_MAX+1] (128) array
+    // (see wifi_cfg_types.h), not just a pointer -- "https" + "://" +
+    // 127-char host + ":" + a port's digits + NUL comfortably fits in 200.
+    char base[200];
+    snprintf(base, sizeof base, "%s://%s:%d",
+             CONFIG_AA_SERVER_SECURE ? "https" : "http",
+             s_cfg.server_host, s_cfg.server_port);
+    aa_run_pairing(base, serial, show_pair_code, s_device_token, sizeof s_device_token);
+    return s_device_token;
+}
+
+// Services a detected revoke (see s_repair_pending / idle_watchdog_task):
+// stop the link, show it on screen, wipe the NVS token, block in pairing for
+// a fresh one, then reboot. Reboot rather than an in-place ws_client restart
+// because ws_client exposes no safe "swap the token and reconnect" primitive
+// -- calling ws_client_start() a second time would re-init a new
+// esp_websocket_client handle (leaking the old one) and spawn a second
+// ws_conn_task racing the first over the same shared statics in ws_client.c.
+// A reboot is clean, and the new token is already in NVS by the time
+// resolve_device_token() (called again next boot) looks for it.
+static void do_repair(const char *why) {
+    ESP_LOGW(TAG, "device token invalid (%s) -- clearing and re-pairing", why);
+    s_active = false;
+    ws_client_set_reconnect(false);
+    wifi_sta_set_perf_mode(false);
+    status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = false };
+    strncpy(m.line1, "Unpaired", sizeof(m.line1) - 1);
+    strncpy(m.line2, "re-pairing", sizeof(m.line2) - 1);
+    xQueueSend(s_status_q, &m, 0);
+    aa_clear_device_token();
+    resolve_device_token();   // blocks until claimed; show_pair_code shows the fresh code
+    esp_restart();
+}
+
 // Common "go idle" transition: stop auto-reconnect, mute the mic, show the
 // idle screen. Shared by the Wake button (toggling off) and the MCP
 // self.device.idle tool (registered via mcp_tools_set_idle_hook below) so a
@@ -521,6 +617,11 @@ static void on_event(const lugo_event_t *ev) {
     s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);  // any server event = activity
     switch (ev->type) {
     case LUGO_EV_WELCOME: {
+        // New session starting: any goodbye reason left over from a prior
+        // session (e.g. one that dropped without ever reaching the GOODBYE
+        // case below) must not leak into this session's disconnect
+        // classification later.
+        s_last_goodbye_reason[0] = '\0';
         s_state = APP_LISTENING;
         if (ev->idle_timeout_s > 0) s_idle_timeout_s = ev->idle_timeout_s;
         ESP_LOGI(TAG, "session ready (idle_timeout_s=%d)", ev->idle_timeout_s);
@@ -567,6 +668,10 @@ static void on_event(const lugo_event_t *ev) {
         }
         break;
     case LUGO_EV_GOODBYE: {
+        // Capture the reason now (ev->text) for the classify check below --
+        // ev is only valid for the duration of this callback.
+        strncpy(s_last_goodbye_reason, ev->text, sizeof(s_last_goodbye_reason) - 1);
+        s_last_goodbye_reason[sizeof(s_last_goodbye_reason) - 1] = '\0';
         // Server idle disconnect. Sleep: stop auto-reconnect so we don't
         // reconnect-storm every idle_timeout; the socket stays closed until the
         // user presses Wake. Go idle (mic muted).
@@ -578,7 +683,21 @@ static void on_event(const lugo_event_t *ev) {
         xQueueReset(s_pktq);   // flush any buffered downlink audio
         audio_spk_reset();
         opus_codec_reset();
-        send_idle_status("Idle");
+        // Revoke check: a static CONFIG_AA_DEVICE_TOKEN override can never be
+        // re-paired away (nothing in NVS to clear -- see resolve_device_token),
+        // so skip classification entirely and just fall through to the normal
+        // idle-sleep-until-wake behavior above, same as any other goodbye.
+        if (CONFIG_AA_DEVICE_TOKEN[0] == '\0' &&
+            aa_classify_disconnect(ws_client_last_handshake_status(),
+                                    s_last_goodbye_reason) == AA_DISCONNECT_REPAIR) {
+            // Defer the actual clear/re-pair/reboot to idle_watchdog_task:
+            // this callback runs on the ws client's own task and must not
+            // block (HTTP + waiting on an operator to claim the code).
+            s_repair_pending = true;
+        } else {
+            send_idle_status("Idle");
+        }
+        s_last_goodbye_reason[0] = '\0';   // consumed; reset for the next session
         break;
     }
     case LUGO_EV_ERROR: {
@@ -710,6 +829,29 @@ static void idle_watchdog_task(void *arg) {
     (void)arg;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
+
+        // Serviced here rather than in on_event (see s_repair_pending's
+        // comment): a goodbye-carried revoke (reason=account_disabled).
+        if (s_repair_pending) {
+            s_repair_pending = false;
+            do_repair("goodbye: account_disabled");   // does not return (esp_restart)
+        }
+
+        // Handshake-rejected-before-CONNECTED revoke (e.g. 401/403): no
+        // LUGO_EV_GOODBYE is ever delivered for this case -- the session
+        // never reached the Lugo protocol layer at all, so this periodic
+        // check is the only place that can notice it. Only while the user is
+        // actively trying to connect (s_active) and there's no static
+        // override token (which cannot be re-paired away and, per the
+        // override guard, should just keep retrying via ws_client's own
+        // throttled reconnect instead).
+        if (s_active && !ws_client_connected() && CONFIG_AA_DEVICE_TOKEN[0] == '\0') {
+            int status = ws_client_last_handshake_status();
+            if (aa_classify_disconnect(status, "") == AA_DISCONNECT_REPAIR) {
+                do_repair("handshake rejected");   // does not return (esp_restart)
+            }
+        }
+
         int to = s_idle_timeout_s;
         if (!s_active || to <= 0) continue;
         uint32_t idle_s = (uint32_t)(esp_timer_get_time() / 1000000) - s_last_activity_s;
@@ -790,16 +932,18 @@ void app_main(void) {
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
-    wifi_cfg_t cfg;
-    ESP_ERROR_CHECK(wifi_cfg_load(&cfg));
+    // s_cfg is file-scope (not a local `cfg`) so resolve_device_token() can
+    // read server_host/server_port later without needing app_main to pass it
+    // down explicitly. Loaded once here and never mutated again.
+    ESP_ERROR_CHECK(wifi_cfg_load(&s_cfg));
 
     display_show("Connecting WiFi...", NULL);
     voice_play(VOICE_CONNECTING);
-    ESP_ERROR_CHECK(wifi_sta_start(cfg.ssid, cfg.password));
+    ESP_ERROR_CHECK(wifi_sta_start(s_cfg.ssid, s_cfg.password));
     if (!wifi_sta_wait_connected(15000)) {
         ESP_LOGW(TAG, "wifi connect failed, starting provisioning portal");
         display_show("WiFi failed", "Starting setup AP...");
-        provisioning_start(&cfg);  // does not return
+        provisioning_start(&s_cfg);  // does not return
     }
 
     display_show("WiFi OK", "Starting…");
@@ -833,15 +977,24 @@ void app_main(void) {
     mcp_tools_set_idle_hook(go_idle);
     mcp_tools_set_volume_hook(show_volume_overlay);
     buttons_start(on_button);  // Wake toggles s_active; Vol +/- adjust volume
-    xTaskCreate(idle_watchdog_task, "idle_wd", 3072, NULL, 3, NULL);
+    // 3072 -> 6144: this task now also runs do_repair()'s blocking call chain
+    // (aa_run_pairing's esp_http_client GET/POST + JSON parsing, possibly over
+    // TLS when CONFIG_AA_SERVER_SECURE), not just the trivial idle-timeout
+    // check it used to. Idle the rest of the time, so the extra headroom only
+    // costs static RAM, not runtime.
+    xTaskCreate(idle_watchdog_task, "idle_wd", 6144, NULL, 3, NULL);
 
     // STT/TTS/language all come from the chatllm profile server-side; the device
     // configures only which profile to connect to (CONFIG_AA_PROFILE). Downlink
     // is decoded at 16 kHz to match the device opus decoder.
+    // resolve_device_token(): CONFIG_AA_DEVICE_TOKEN override -> stored NVS
+    // token -> pair now (blocks until claimed; status_task is already running
+    // by this point so show_pair_code's queue-based update is safe).
+    const char *device_token = resolve_device_token();
     s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
     ESP_ERROR_CHECK(ws_client_start(
-        cfg.server_host, cfg.server_port, CONFIG_AA_SERVER_SECURE,
-        CONFIG_AA_PROFILE, CONFIG_AA_DEVICE_TOKEN, 16000, 16000, 60, on_event, on_audio));
+        s_cfg.server_host, s_cfg.server_port, CONFIG_AA_SERVER_SECURE,
+        CONFIG_AA_PROFILE, device_token, 16000, 16000, 60, on_event, on_audio));
 
     // mic_task runs opus_encode(), which is extraordinarily stack-hungry on
     // ESP32 (SILK wideband analysis buffers live on the stack): measured
