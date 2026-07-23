@@ -46,11 +46,23 @@ static void on_ws(void *arg, esp_event_base_t base, int32_t id, void *data) {
     // A server-initiated graceful close arrives as CLOSED, not DISCONNECTED.
     case WEBSOCKET_EVENT_CLOSED:
         s_connected = false; ESP_LOGW(TAG, "closed"); break;
-    case WEBSOCKET_EVENT_ERROR:
+    case WEBSOCKET_EVENT_ERROR: {
+        // The vendored esp_websocket_client sets error_handle's handshake
+        // status once (on a failed transport connect) and never clears it,
+        // then copies it into every subsequent ERROR event verbatim. A real
+        // handshake rejection can only happen before this attempt's
+        // CONNECTED fires; capture s_connected (about to be cleared) before
+        // clobbering it so a later mid-session error (e.g. a Wi-Fi blip)
+        // doesn't re-report a stale status from an earlier, unrelated
+        // connect attempt as a fresh rejection (genuine mid-session revoke
+        // is a `goodbye reason=account_disabled`, not a handshake status).
+        bool was_established = s_connected;
         s_connected = false;
-        if (d->error_handle.esp_ws_handshake_status_code > 0)
+        if (!was_established && d->error_handle.esp_ws_handshake_status_code > 0)
             s_last_handshake_status = d->error_handle.esp_ws_handshake_status_code;
-        ESP_LOGW(TAG, "ws error"); break;
+        ESP_LOGW(TAG, "ws error");
+        break;
+    }
     case WEBSOCKET_EVENT_DATA: {
         // Only act on a complete frame delivered in a single event. Frames
         // larger than WS_BUF_SIZE arrive fragmented and are dropped — say so
