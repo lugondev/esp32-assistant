@@ -7,8 +7,11 @@
 #define KEY "device_token"
 
 int aa_load_device_token(char *out, int cap) {
+    if (cap <= 0) return -1;
     nvs_handle_t h;
-    if (nvs_open(NS, NVS_READONLY, &h) != ESP_OK) return 0;
+    esp_err_t open_err = nvs_open(NS, NVS_READONLY, &h);
+    if (open_err == ESP_ERR_NVS_NOT_FOUND) return 0;   // namespace never created yet = absent
+    if (open_err != ESP_OK) return -1;                 // genuine NVS error
     size_t len = (size_t) cap;
     esp_err_t err = nvs_get_str(h, KEY, out, &len);
     nvs_close(h);
