@@ -18,6 +18,11 @@ int aa_save_device_token(const char *token);
 int aa_clear_device_token(void);
 
 typedef void (*aa_show_code_fn)(const char *code);
+// Blocks until pairing succeeds. Runs pair/init then polls pair/status every
+// 3s, transparently re-initializing (fresh code) on HTTP 404, retrying
+// forever on any other failure -- a device that cannot function unpaired is
+// expected to keep trying rather than give up. Never returns an error code:
+// it only returns once claimed, filling token_out and returning 0.
 int aa_run_pairing(const char *base_url, const char *serial,
                    aa_show_code_fn show, char *token_out, int token_cap);
 
