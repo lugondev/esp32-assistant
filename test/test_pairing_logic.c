@@ -1,5 +1,4 @@
 #include "pairing.h"
-#include <assert.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -32,6 +31,12 @@ static void test_parse_status(void) {
     CHECK(r == 1);
     CHECK(strcmp(tok, "TOK123") == 0);
     CHECK(aa_parse_pair_status("not json", tok, sizeof tok) == -1);
+    // Test pretty-printed JSON (whitespace after colons)
+    int r2 = aa_parse_pair_status(
+        "{\"success\":true,\"data\":{\"claimed\": true,\"device_id\":\"d\",\"token\": \"TOK123\"}}",
+        tok, sizeof tok);
+    CHECK(r2 == 1);
+    CHECK(strcmp(tok, "TOK123") == 0);
 }
 
 int main(void) {
