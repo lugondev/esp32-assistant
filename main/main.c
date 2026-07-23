@@ -860,6 +860,17 @@ void app_main(void) {
     // a direct display_show call) so it's status_task — not app_main — that
     // touches the panel, same isolation rule as every other idle transition;
     // status_task is already running by this point.
+#if CONFIG_AA_AUTO_WAKE
+    // Dev: connect to the gateway at boot without a physical Wake button —
+    // mirrors the BTN_WAKE (not-active) path. Remove for production.
+    s_active = true;
+    ws_client_set_reconnect(true);
+    wifi_sta_set_perf_mode(true);
+    s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
+    send_listening_status();
+    ESP_LOGI(TAG, "auto-wake: connecting to gateway (CONFIG_AA_AUTO_WAKE)");
+#else
     send_idle_status("Ready");
     ESP_LOGI(TAG, "running (asleep — press wake to connect)");
+#endif
 }

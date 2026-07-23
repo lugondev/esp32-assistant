@@ -79,6 +79,14 @@ config AA_BOOT_COLOR_BARS
         alone would hide it). Costs ~2s on every boot, so it's off by
         default — enable when bringing up a new panel or rewiring SPI.
 
+config AA_AUTO_WAKE
+    bool "Auto-wake at boot (connect to gateway without a Wake button)"
+    default n
+    help
+        Dev/bring-up aid: enter the active/listening state at boot so the device
+        opens the gateway WebSocket immediately, instead of waiting for a physical
+        Wake button press. Leave off for normal builds (connect-on-wake).
+
 config AA_SKIP_DISPLAY_INIT
     bool "Skip display panel hardware init (bring-up isolation)"
     default n
@@ -114,7 +122,7 @@ config AA_BOARD_LUGO_S3_SSD1306
     depends on IDF_TARGET_ESP32S3
 
 config AA_BOARD_LUGO_C3_DEVKIT
-    bool "Lugo C3 devkit (full-duplex I2S) [pins are placeholders]"
+    bool "Lugo C3 DevKitM-1 (SSD1306 0.96in I2C + MAX98357A/INMP441 full-duplex I2S)"
     depends on IDF_TARGET_ESP32C3
 
 config AA_BOARD_LUGO_C3_SUPERMINI

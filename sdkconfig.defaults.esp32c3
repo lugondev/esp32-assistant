@@ -1,9 +1,11 @@
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_160=y
 
-# ESP32-C3 SuperMini is the only real C3 board today; force-select it so the
-# build is deterministic (no autodetect ambiguity with the placeholder devkit).
+# Force-select the C3 board so the build is deterministic (both C3 boards share
+# the same SSD1306 I2C probe, so autodetect can't tell them apart). DevKitM-1
+# (MINI-1 module) is the working board — its antenna is fine, unlike the
+# SuperMini. Swap to CONFIG_AA_BOARD_LUGO_C3_SUPERMINI=y for that board.
 # NOTE: 160MHz is the C3's hardware maximum — there is NO 240MHz option (unlike
 # S3). If opus_encode overruns the 60ms budget (watch "opus encode new max"),
 # the fix is lower opus complexity / less CPU contention, not a higher clock.
-CONFIG_AA_BOARD_LUGO_C3_SUPERMINI=y
+CONFIG_AA_BOARD_LUGO_C3_DEVKIT=y

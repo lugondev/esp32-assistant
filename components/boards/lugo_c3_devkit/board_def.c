@@ -1,33 +1,44 @@
 #include "board.h"
+#include "board_i2c_probe.h"
 #include "i2s_fd.h"
-#include "display_st7789.h"
+#include "display_ssd1306.h"
 #include "buttons_gpio.h"
 #include "sdkconfig.h"
 
 #if CONFIG_IDF_TARGET_ESP32C3
 
-// PLACEHOLDER pins — no physical C3 board yet. C3 usable GPIO is 0-10 and 18-21;
-// avoid strapping (2,8,9) and SPI-flash (12-17) pins. Set these to the real
-// wiring when a board exists. Mic + speaker share the single full-duplex I2S.
+// ESP32-C3-DevKitM-1 (ESP32-C3-MINI-1 module): same peripheral wiring as the
+// SuperMini build (MAX98357A + INMP441 on the single full-duplex I2S, SSD1306
+// OLED over I2C, wake on GPIO0) but on a proper Espressif module whose antenna
+// actually works — the fix for the SuperMini's weak-TX antenna defect.
+//
+// DevKitM-1 pin notes: GPIO8 = onboard RGB LED (WS2812), GPIO9 = BOOT button,
+// GPIO2/8/9 are strapping, GPIO18/19 are native USB (not for peripherals).
+// The speaker owns the physical BCLK(7)/WS(3); the mic is on its own SCK(1)/
+// WS(2), so the shared clock is fanned out onto them (mic_bclk/mic_ws).
 static const i2s_fd_cfg_t fd_cfg = {
-    .bclk = 4, .ws = 5, .mic_data = 6, .spk_data = 7,
-    .mic_bclk = -1, .mic_ws = -1,   // mic shares bclk/ws physically; no fan-out
+    .bclk = 7, .ws = 3, .mic_data = 10, .spk_data = 6,
+    .mic_bclk = 1, .mic_ws = 2,   // mic on its own SCK/WS pins -> fan out clock
 };
-static const display_st7789_cfg_t display_cfg = {
-    .sclk = 0, .mosi = 1, .dc = 10, .rst = 18, .bl = 19,
+static const display_ssd1306_cfg_t display_cfg = {
+    .scl = 5, .sda = 4, .i2c_addr = 0x3C,
 };
 static const buttons_gpio_cfg_t buttons_cfg = {
-    // No emotion button: the C3 has no GPIO46 and no free pin wired for it.
-    .wake = 3, .vol_up = 20, .vol_down = 21, .emotion = -1,
+    .wake = 0, .vol_up = -1, .vol_down = -1, .emotion = -1,
 };
 
-static bool match(void) { return true; }   // Kconfig-forced; single C3 board
+// SSD1306 ACKs at 0x3C (sometimes 0x3D) on scl/sda; lets autodetect work, a
+// Kconfig force still wins by name.
+static bool match(void) {
+    return board_i2c_probe(display_cfg.scl, display_cfg.sda, display_cfg.i2c_addr, 50) ||
+           board_i2c_probe(display_cfg.scl, display_cfg.sda, 0x3D, 50);
+}
 
 LUGO_BOARD_REGISTER(board_lugo_c3_devkit) {
     .name        = "lugo-c3-devkit",
     .mic         = &i2s_fd_mic_ops,
     .speaker     = &i2s_fd_speaker_ops,
-    .display     = &display_st7789_ops,
+    .display     = &display_ssd1306_ops,
     .buttons     = &buttons_gpio_ops,
     .mic_cfg     = &fd_cfg,        // both point at the shared full-duplex cfg
     .speaker_cfg = &fd_cfg,
