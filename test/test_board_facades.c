@@ -63,7 +63,7 @@ static const battery_ops_t MOCK_BATTERY = {
 static const board_t MOCK_BOARD = { .name="mock", .mic=&MOCK_MIC, .speaker=&MOCK_SPEAKER,
                                     .display=&MOCK_DISPLAY, .buttons=&MOCK_BUTTONS };
 // No .battery set (NULL) — a board with no battery hardware, same as
-// lugo-s3-st7789 today. Deliberately separate from MOCK_BOARD so tests can
+// lugo-s3-devkit today. Deliberately separate from MOCK_BOARD so tests can
 // exercise both the dispatch path and the "no hardware" default together.
 static const board_t MOCK_BOARD_WITH_BATTERY = { .name="mock-batt", .mic=&MOCK_MIC,
     .speaker=&MOCK_SPEAKER, .display=&MOCK_DISPLAY, .buttons=&MOCK_BUTTONS,

@@ -113,12 +113,16 @@ choice AA_BOARD
     prompt "Target board"
     default AA_BOARD_AUTODETECT
 
-config AA_BOARD_LUGO_S3_ST7789
-    bool "Lugo S3 (ST7789 + MAX98357A/INMP441 dual-I2S)"
+config AA_BOARD_LUGO_S3_DEVKIT
+    bool "Lugo S3 devkit (auto SSD1306/ST7789 + MAX98357A/INMP441 dual-I2S)"
     depends on IDF_TARGET_ESP32S3
 
-config AA_BOARD_LUGO_S3_SSD1306
-    bool "Lugo S3 (SSD1306 0.96in SPI + MAX98357A/INMP441 dual-I2S)"
+config AA_BOARD_LUGO_S3_SUPERMINI
+    bool "Lugo S3 SuperMini (auto display) [placeholder pins]"
+    depends on IDF_TARGET_ESP32S3
+
+config AA_BOARD_LUGO_S3_WROOM
+    bool "Lugo S3 WROOM (auto display, camera-capable) [placeholder pins]"
     depends on IDF_TARGET_ESP32S3
 
 config AA_BOARD_LUGO_C3_DEVKIT
@@ -139,8 +143,9 @@ config AA_BOARD_FORCE
 
 config AA_BOARD_NAME
     string
-    default "lugo-s3-st7789" if AA_BOARD_LUGO_S3_ST7789
-    default "lugo-s3-ssd1306" if AA_BOARD_LUGO_S3_SSD1306
+    default "lugo-s3-devkit" if AA_BOARD_LUGO_S3_DEVKIT
+    default "lugo-s3-supermini" if AA_BOARD_LUGO_S3_SUPERMINI
+    default "lugo-s3-wroom" if AA_BOARD_LUGO_S3_WROOM
     default "lugo-c3-devkit" if AA_BOARD_LUGO_C3_DEVKIT
     default "lugo-c3-supermini" if AA_BOARD_LUGO_C3_SUPERMINI
     default ""

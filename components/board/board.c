@@ -11,7 +11,7 @@ static const char *TAG = "board";
 esp_err_t board_detect_and_select(void) {
     int n = (int)(_board_desc_end - _board_desc_start);
 #ifdef CONFIG_AA_BOARD_FORCE
-    const char *forced = CONFIG_AA_BOARD_NAME;   // e.g. "lugo-s3-st7789"
+    const char *forced = CONFIG_AA_BOARD_NAME;   // e.g. "lugo-s3-devkit"
 #else
     const char *forced = NULL;                    // auto-detect via match()
 #endif

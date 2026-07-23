@@ -5,7 +5,7 @@
 #include <stdbool.h>
 
 // Pins already owned by mic/speaker/display/buttons on this board (see
-// board_def.c for lugo-s3-st7789). A tool-driven GPIO write must never touch
+// board_def.c for lugo-s3-devkit). A tool-driven GPIO write must never touch
 // these — reconfiguring, say, the I2S BCLK pin as a generic output would
 // desync audio. Kconfig-configurable mic/speaker pins are read as their
 // #define'd values; display/button pins are the literal ints in board_def.c.
