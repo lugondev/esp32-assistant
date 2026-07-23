@@ -35,3 +35,7 @@ bool ws_client_connected(void);
 // Sleep/wake the link. false: stay disconnected after a close (no reconnect
 // storm on idle goodbye). true: allow the reconnect task to re-establish (~1s).
 void ws_client_set_reconnect(bool enabled);
+// HTTP status of a rejected WS handshake since the last CONNECTED (e.g. 403
+// when the device_token was revoked), or 0 if none. Lets main.c distinguish
+// "server rejected our auth" from a plain network drop after the link ends.
+int ws_client_last_handshake_status(void);

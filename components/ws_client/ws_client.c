@@ -23,12 +23,18 @@ static volatile bool s_reconnect_enabled = true;
 static char s_profile[64];
 static int  s_in_sr, s_out_sr, s_frame_ms;
 
+// HTTP status of a rejected WS handshake since the last CONNECTED (e.g. 403
+// when the device_token was revoked). Reset on CONNECTED, populated from
+// esp_ws_handshake_status_code on ERROR when the underlying lib provides it.
+static int s_last_handshake_status = 0;
+
 static void on_ws(void *arg, esp_event_base_t base, int32_t id, void *data) {
     (void)arg; (void)base;
     esp_websocket_event_data_t *d = data;
     switch (id) {
     case WEBSOCKET_EVENT_CONNECTED: {
         s_connected = true;
+        s_last_handshake_status = 0;
         ESP_LOGI(TAG, "connected");
         char buf[256];
         int n = lugo_build_wakeup(buf, sizeof buf, s_profile, s_in_sr, s_out_sr, s_frame_ms);
@@ -41,7 +47,10 @@ static void on_ws(void *arg, esp_event_base_t base, int32_t id, void *data) {
     case WEBSOCKET_EVENT_CLOSED:
         s_connected = false; ESP_LOGW(TAG, "closed"); break;
     case WEBSOCKET_EVENT_ERROR:
-        s_connected = false; ESP_LOGW(TAG, "ws error"); break;
+        s_connected = false;
+        if (d->error_handle.esp_ws_handshake_status_code > 0)
+            s_last_handshake_status = d->error_handle.esp_ws_handshake_status_code;
+        ESP_LOGW(TAG, "ws error"); break;
     case WEBSOCKET_EVENT_DATA: {
         // Only act on a complete frame delivered in a single event. Frames
         // larger than WS_BUF_SIZE arrive fragmented and are dropped — say so
@@ -181,3 +190,5 @@ int ws_client_send_mcp(const char *json_payload) {
 }
 
 bool ws_client_connected(void) { return s_connected; }
+
+int ws_client_last_handshake_status(void) { return s_last_handshake_status; }
