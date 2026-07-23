@@ -38,8 +38,11 @@ BATTERY_CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
                  -I../components/battery/include -I../components/board/include -Ishims
 SRC_BATTERY = ../components/battery/battery_logic.c
 
+PAIRING_CFLAGS = -std=c11 -Wall -Wextra -g -O0 -I../components/pairing/include
+SRC_PAIRING_LOGIC = ../components/pairing/pairing_logic.c
+
 .PHONY: test
-test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_protocol test_mcp_server test_board_select test_board_facades test_gfx test_robot_eyes test_statusbar test_battery_logic
+test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_protocol test_mcp_server test_board_select test_board_facades test_gfx test_robot_eyes test_statusbar test_battery_logic test_pairing_logic
 	./test_provisioning_ssid
 	./test_provisioning_form
 	./test_display_font
@@ -51,6 +54,7 @@ test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_
 	./test_robot_eyes
 	./test_statusbar
 	./test_battery_logic
+	./test_pairing_logic
 
 test_provisioning_ssid: test_provisioning_ssid.c $(SRC_PROVISIONING_SSID)
 	$(CC) $(CFLAGS) -o $@ $^
@@ -85,6 +89,9 @@ test_statusbar: test_statusbar.c $(SRC_STATUSBAR)
 test_battery_logic: test_battery_logic.c $(SRC_BATTERY)
 	$(CC) $(BATTERY_CFLAGS) -o $@ $^
 
+test_pairing_logic: test_pairing_logic.c $(SRC_PAIRING_LOGIC)
+	$(CC) $(PAIRING_CFLAGS) -o $@ $^
+
 clean:
 	rm -rf test_provisioning_ssid test_provisioning_ssid.dSYM \
 	       test_provisioning_form test_provisioning_form.dSYM \
@@ -96,4 +103,5 @@ clean:
 	       test_gfx test_gfx.dSYM \
 	       test_robot_eyes test_robot_eyes.dSYM \
 	       test_statusbar test_statusbar.dSYM \
-	       test_battery_logic test_battery_logic.dSYM
+	       test_battery_logic test_battery_logic.dSYM \
+	       test_pairing_logic test_pairing_logic.dSYM
