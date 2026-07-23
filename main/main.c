@@ -770,7 +770,11 @@ void app_main(void) {
     ESP_LOGI(TAG, "esp32-assistant booting");
     robot_eyes_set_glow_pct(0);   // borderless eyes — no glow halo
     ESP_ERROR_CHECK(board_detect_and_select());
-    ESP_ERROR_CHECK(display_init());
+    // Non-fatal: a missing/miswired panel must not boot-loop the device. The
+    // driver runs headless (show/flush become no-ops) so audio/WiFi still come
+    // up. See ssd1306_init's i2c scan log to diagnose the panel.
+    esp_err_t disp_err = display_init();
+    if (disp_err != ESP_OK) ESP_LOGW(TAG, "display_init failed (%s) — continuing headless", esp_err_to_name(disp_err));
 #if CONFIG_AA_BOOT_COLOR_BARS
     show_boot_color_bars();
     vTaskDelay(pdMS_TO_TICKS(2000));  // hold the bars long enough to actually see them
@@ -801,11 +805,19 @@ void app_main(void) {
     display_show("WiFi OK", "Starting…");
     ESP_ERROR_CHECK(opus_codec_init());
 
-    // By-value packet queues with PSRAM item storage (see pkt_t): only the
-    // small StaticQueue_t bookkeeping stays in internal RAM.
+    // By-value packet queues with off-TCB item storage (see pkt_t): only the
+    // small StaticQueue_t bookkeeping stays in internal RAM. Prefer PSRAM, but
+    // fall back to internal RAM on SoCs without it (e.g. ESP32-C3), where
+    // MALLOC_CAP_SPIRAM returns NULL — otherwise boot would abort here.
     static StaticQueue_t pktq_cb, uplinkq_cb;
-    uint8_t *pktq_stor    = heap_caps_malloc(PKT_QUEUE_DEPTH * sizeof(pkt_t), MALLOC_CAP_SPIRAM);
-    uint8_t *uplinkq_stor = heap_caps_malloc(PKT_QUEUE_DEPTH * sizeof(pkt_t), MALLOC_CAP_SPIRAM);
+    const size_t q_bytes = PKT_QUEUE_DEPTH * sizeof(pkt_t);
+    uint8_t *pktq_stor    = heap_caps_malloc(q_bytes, MALLOC_CAP_SPIRAM);
+    uint8_t *uplinkq_stor = heap_caps_malloc(q_bytes, MALLOC_CAP_SPIRAM);
+    if (!pktq_stor || !uplinkq_stor) {
+        ESP_LOGW(TAG, "no PSRAM for packet queues; using internal RAM (%u B x2)", (unsigned)q_bytes);
+        if (!pktq_stor)    pktq_stor    = heap_caps_malloc(q_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (!uplinkq_stor) uplinkq_stor = heap_caps_malloc(q_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
     ESP_ERROR_CHECK(pktq_stor && uplinkq_stor ? ESP_OK : ESP_ERR_NO_MEM);
     s_pktq    = xQueueCreateStatic(PKT_QUEUE_DEPTH, sizeof(pkt_t), pktq_stor, &pktq_cb);
     s_uplinkq = xQueueCreateStatic(PKT_QUEUE_DEPTH, sizeof(pkt_t), uplinkq_stor, &uplinkq_cb);

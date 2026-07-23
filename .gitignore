@@ -12,6 +12,9 @@ test/*.dSYM/
 
 # ESP-IDF build output
 build/
+# ESP32-C3 build output (separate target dir; see sdkconfig.defaults.esp32c3)
+build-c3/
+sdkconfig.c3
 sdkconfig
 sdkconfig.old
 managed_components/

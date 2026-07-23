@@ -11,6 +11,7 @@
 // wiring when a board exists. Mic + speaker share the single full-duplex I2S.
 static const i2s_fd_cfg_t fd_cfg = {
     .bclk = 4, .ws = 5, .mic_data = 6, .spk_data = 7,
+    .mic_bclk = -1, .mic_ws = -1,   // mic shares bclk/ws physically; no fan-out
 };
 static const display_st7789_cfg_t display_cfg = {
     .sclk = 0, .mosi = 1, .dc = 10, .rst = 18, .bl = 19,

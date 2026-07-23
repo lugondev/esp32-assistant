@@ -17,6 +17,10 @@ static const char *TAG = "display";
 #define DISP_PAGES      (DISP_HEIGHT / 8)
 
 static esp_lcd_panel_handle_t s_panel;
+// Set only after a fully successful init. When false (e.g. no OLED wired /
+// wrong pins / wrong address), show()/flush() become no-ops instead of poking
+// an uninitialised panel — the device still boots and runs headless.
+static bool s_ready;
 
 // esp_lcd's SSD1306 draw_bitmap expects color_data already packed in the
 // panel's native page format (1 byte per column per 8-row page, LSB =
@@ -37,6 +41,7 @@ static void set_pixel(int x, int y, bool on) {
 // shadow framebuffer. w*n_pages is at most DISP_WIDTH*DISP_PAGES (1KB) —
 // small enough for a static scratch buffer, no heap/stack pressure.
 static void push_pages(int x, int w, int page_start, int page_end) {
+    if (!s_ready) return;   // no panel (init failed / none wired): run headless
     static uint8_t scratch[DISP_WIDTH * DISP_PAGES];
     int idx = 0;
     for (int p = page_start; p <= page_end; p++)
@@ -75,6 +80,13 @@ static void draw_line(const char *text, int y) {
 
 static esp_err_t ssd1306_init(const void *cfg_v) {
     const display_ssd1306_cfg_t *c = (const display_ssd1306_cfg_t *)cfg_v;
+#if CONFIG_AA_SKIP_DISPLAY_INIT
+    // Bring-up isolation: no I2C traffic at all; s_ready stays false so
+    // show()/flush() are no-ops. See CONFIG_AA_SKIP_DISPLAY_INIT.
+    (void)c;
+    ESP_LOGW(TAG, "display init skipped (CONFIG_AA_SKIP_DISPLAY_INIT)");
+    return ESP_OK;
+#else
 
     i2c_master_bus_config_t bus_config = {
         .i2c_port = I2C_NUM_0,
@@ -87,6 +99,24 @@ static esp_err_t ssd1306_init(const void *cfg_v) {
     i2c_master_bus_handle_t bus_handle;
     ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &bus_handle));
 
+    // Bring-up aid: log every address that ACKs on this bus, so a silent OLED
+    // (wrong pins / SDA-SCL swap / unpowered / wrong 0x3C vs 0x3D) is instantly
+    // diagnosable from the boot log instead of just aborting on a NACK.
+    int found = 0;
+    for (uint16_t a = 0x08; a <= 0x77; a++) {
+        if (i2c_master_probe(bus_handle, a, 50) == ESP_OK) {
+            ESP_LOGI(TAG, "i2c device @ 0x%02X (scl=%d sda=%d)", a, c->scl, c->sda);
+            found++;
+        }
+    }
+    if (!found) ESP_LOGW(TAG, "i2c scan found NOTHING on scl=%d/sda=%d — check wiring/power", c->scl, c->sda);
+
+    // From here on, failures are non-fatal: log and return an error so the
+    // device boots headless (see s_ready) rather than boot-looping on abort().
+#define DISP_TRY(expr) do { esp_err_t _e = (expr); if (_e != ESP_OK) { \
+        ESP_LOGE(TAG, "display init: %s failed (%s) — running headless", #expr, esp_err_to_name(_e)); \
+        return _e; } } while (0)
+
     esp_lcd_panel_io_handle_t io_handle;
     esp_lcd_panel_io_i2c_config_t io_config = {
         .dev_addr = c->i2c_addr,
@@ -94,9 +124,11 @@ static esp_err_t ssd1306_init(const void *cfg_v) {
         .dc_bit_offset = 6,   // SSD1306's I2C control-byte D/C bit position
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
-        .scl_speed_hz = 400000,
+        // 100kHz (not 400): tolerant of weak/absent external pull-ups and long
+        // dupont wiring during bring-up. A status/eyes panel doesn't need 400.
+        .scl_speed_hz = 100000,
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(bus_handle, &io_config, &io_handle));
+    DISP_TRY(esp_lcd_new_panel_io_i2c(bus_handle, &io_config, &io_handle));
 
     esp_lcd_panel_ssd1306_config_t vendor_cfg = { .height = DISP_HEIGHT };
     esp_lcd_panel_dev_config_t panel_config = {
@@ -104,19 +136,22 @@ static esp_err_t ssd1306_init(const void *cfg_v) {
         .bits_per_pixel = 1,
         .vendor_config = &vendor_cfg,
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_ssd1306(io_handle, &panel_config, &s_panel));
+    DISP_TRY(esp_lcd_new_panel_ssd1306(io_handle, &panel_config, &s_panel));
 
-    ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));   // no-op (reset_gpio_num == -1)
-    ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
+    DISP_TRY(esp_lcd_panel_reset(s_panel));   // no-op (reset_gpio_num == -1)
+    DISP_TRY(esp_lcd_panel_init(s_panel));
     // This module's default orientation is rotated 180 (both axes reversed,
     // not just upside-down) — mirroring only Y fixed vertical but left
     // horizontal reversed, showing as a left-right mirror. Flip both.
-    ESP_ERROR_CHECK(esp_lcd_panel_mirror(s_panel, true, true));
-    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
+    DISP_TRY(esp_lcd_panel_mirror(s_panel, true, true));
+    DISP_TRY(esp_lcd_panel_disp_on_off(s_panel, true));
+#undef DISP_TRY
 
+    s_ready = true;
     clear_screen();
     ESP_LOGI(TAG, "display ready (ssd1306 i2c %dx%d)", DISP_WIDTH, DISP_HEIGHT);
     return ESP_OK;
+#endif // CONFIG_AA_SKIP_DISPLAY_INIT
 }
 
 static void ssd1306_show(const char *line1, const char *line2) {

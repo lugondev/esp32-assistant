@@ -167,7 +167,13 @@ void provisioning_start(const wifi_cfg_t *current) {
     ap_config.ap.max_connection = 4;
     ap_config.ap.authmode = WIFI_AUTH_OPEN;
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+    // AP-only, NOT APSTA: the portal takes the SSID from a manual form and
+    // saves+reboots (no live STA scan needed), so keeping STA active only lets
+    // wifi_sta's reconnect handler keep scanning all channels — on the single
+    // radio that starves the AP beacon and makes "Lugo-XXXX" unfindable. Pure
+    // AP parks the radio on the AP channel so the beacon is stable. Any stray
+    // esp_wifi_connect() from the reconnect timer is a harmless no-op in AP mode.
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
     ESP_ERROR_CHECK(esp_wifi_start());
     ESP_LOGI(TAG, "provisioning AP '%s' up at 192.168.9.1", ssid);

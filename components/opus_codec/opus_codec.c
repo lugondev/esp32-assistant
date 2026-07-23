@@ -1,6 +1,7 @@
 #include "opus_codec.h"
 #include "opus.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 
 static const char *TAG = "opus";
 static OpusEncoder *s_enc;
@@ -21,7 +22,17 @@ esp_err_t opus_codec_init(void) {
 }
 
 int opus_codec_encode(const int16_t *pcm960, uint8_t *out, int out_cap) {
+    // Each 60ms frame must encode in < 60000us or the mic pipeline falls behind
+    // (critical on single-core C3, where encode shares the core with WiFi). Log
+    // only new worst-case times so it's quiet once warmed up.
+    int64_t t0 = esp_timer_get_time();
     int n = opus_encode(s_enc, pcm960, OPUS_UP_SAMPLES, out, out_cap);
+    int64_t dt = esp_timer_get_time() - t0;
+    static int64_t s_max_us;
+    if (dt > s_max_us) {
+        s_max_us = dt;
+        ESP_LOGI(TAG, "opus_encode new max %lld us / 60000 budget", dt);
+    }
     return n < 0 ? -1 : n;
 }
 

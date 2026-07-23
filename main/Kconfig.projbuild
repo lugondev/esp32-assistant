@@ -79,6 +79,14 @@ config AA_BOOT_COLOR_BARS
         alone would hide it). Costs ~2s on every boot, so it's off by
         default — enable when bringing up a new panel or rewiring SPI.
 
+config AA_SKIP_DISPLAY_INIT
+    bool "Skip display panel hardware init (bring-up isolation)"
+    default n
+    help
+        Leaves the display driver registered but skips the actual panel bring-up
+        (no I2C/SPI traffic); show()/flush() become no-ops. Use to isolate a
+        WiFi/audio bring-up from a flaky/absent panel. Leave off for normal builds.
+
 config AA_SKIP_AUDIO_INIT
     bool "Skip mic/speaker I2S hardware init (Wokwi simulation only)"
     default n
@@ -109,6 +117,10 @@ config AA_BOARD_LUGO_C3_DEVKIT
     bool "Lugo C3 devkit (full-duplex I2S) [pins are placeholders]"
     depends on IDF_TARGET_ESP32C3
 
+config AA_BOARD_LUGO_C3_SUPERMINI
+    bool "Lugo C3 SuperMini (SSD1306 0.96in I2C + MAX98357A/INMP441 full-duplex I2S)"
+    depends on IDF_TARGET_ESP32C3
+
 config AA_BOARD_AUTODETECT
     bool "Auto-detect (multi-board single binary)"
 endchoice
@@ -122,6 +134,7 @@ config AA_BOARD_NAME
     default "lugo-s3-st7789" if AA_BOARD_LUGO_S3_ST7789
     default "lugo-s3-ssd1306" if AA_BOARD_LUGO_S3_SSD1306
     default "lugo-c3-devkit" if AA_BOARD_LUGO_C3_DEVKIT
+    default "lugo-c3-supermini" if AA_BOARD_LUGO_C3_SUPERMINI
     default ""
 
 endmenu

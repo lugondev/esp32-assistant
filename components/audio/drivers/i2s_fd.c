@@ -1,6 +1,9 @@
 #include "i2s_fd.h"
 #include "driver/i2s_std.h"
+#include "driver/gpio.h"
 #include "soc/soc_caps.h"
+#include "soc/i2s_periph.h"
+#include "esp_rom_gpio.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -19,6 +22,16 @@ static bool s_ready;   // guards the shared full-duplex init (both ops call it)
 // Allocate the shared full-duplex controller once. Idempotent: mic->init and
 // speaker->init both call it; init order does not matter.
 // C3 full-duplex — UNVERIFIED on hardware.
+// Duplicate one of the controller's clock output signals onto an extra pad, so
+// a mic wired to its own SCK/WS pins gets the same clock the speaker's shared
+// bclk/ws pin already carries. No-op when gpio < 0 (mic shares the pins).
+static void fd_clock_fanout(int gpio, uint32_t out_sig) {
+    if (gpio < 0) return;
+    esp_rom_gpio_pad_select_gpio((uint32_t)gpio);
+    gpio_set_direction((gpio_num_t)gpio, GPIO_MODE_OUTPUT);
+    esp_rom_gpio_connect_out_signal((uint32_t)gpio, out_sig, false, false);
+}
+
 static esp_err_t fd_ensure_init(const void *cfg_v) {
     if (s_ready) return ESP_OK;
     const i2s_fd_cfg_t *c = (const i2s_fd_cfg_t *)cfg_v;
@@ -26,6 +39,12 @@ static esp_err_t fd_ensure_init(const void *cfg_v) {
     // needs 32-bit slots, so RX and TX are both 32-bit STEREO @16kHz (differing
     // bit widths cannot share one BCLK). C3 full-duplex — UNVERIFIED on hardware.
     i2s_chan_config_t cc = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
+    // Single-core C3: the TX task shares the core with WiFi + opus decode and
+    // can briefly starve the I2S DMA. auto_clear makes an underrun emit silence
+    // instead of replaying stale buffer garbage (the audible crackle/"rè");
+    // extra DMA descriptors give the refill path more slack.
+    cc.auto_clear = true;
+    cc.dma_desc_num = 8;
     ESP_ERROR_CHECK(i2s_new_channel(&cc, &s_tx, &s_rx));
     i2s_std_config_t std = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(16000),
@@ -38,6 +57,11 @@ static esp_err_t fd_ensure_init(const void *cfg_v) {
     };
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(s_rx, &std));
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(s_tx, &std));
+    // If the mic is on its own SCK/WS pins, mirror the controller's clock onto
+    // them (the shared bclk/ws pin ends up carrying the TX signals after the
+    // tx init above, so fan those same signals out). UNVERIFIED on hardware.
+    fd_clock_fanout(c->mic_bclk, i2s_periph_signal[I2S_NUM_0].m_tx_bck_sig);
+    fd_clock_fanout(c->mic_ws,   i2s_periph_signal[I2S_NUM_0].m_tx_ws_sig);
     ESP_ERROR_CHECK(i2s_channel_enable(s_rx));
     ESP_ERROR_CHECK(i2s_channel_enable(s_tx));
     s_tx_mutex = xSemaphoreCreateMutex();

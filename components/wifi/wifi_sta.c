@@ -29,11 +29,15 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data) {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_event_sta_disconnected_t *d = (wifi_event_sta_disconnected_t *)data;
         xEventGroupClearBits(s_events, BIT_CONNECTED);
         int shift = s_disconnects < 4 ? s_disconnects : 4;
         if (s_disconnects < 4) s_disconnects++;
         uint64_t delay_ms = 500ULL << shift;   // 500ms, 1s, 2s, 4s, 8s cap
-        ESP_LOGW(TAG, "disconnected; reconnecting in %ums", (unsigned)delay_ms);
+        // reason: 201=NO_AP_FOUND, 15=4WAY_HANDSHAKE(wrong pass), 205=CONN_FAIL,
+        // 200=BEACON_TIMEOUT; rssi is how strong the AP looked to us (weak = RF).
+        ESP_LOGW(TAG, "disconnected (reason %d, rssi %d); reconnecting in %ums",
+                 d->reason, d->rssi, (unsigned)delay_ms);
         esp_timer_stop(s_reconnect_timer);   // no-op if not running
         esp_timer_start_once(s_reconnect_timer, delay_ms * 1000);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
