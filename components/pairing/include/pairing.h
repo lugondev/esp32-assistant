@@ -17,6 +17,10 @@ int aa_load_device_token(char *out, int cap);
 int aa_save_device_token(const char *token);
 int aa_clear_device_token(void);
 
+typedef void (*aa_show_code_fn)(const char *code);
+int aa_run_pairing(const char *base_url, const char *serial,
+                   aa_show_code_fn show, char *token_out, int token_cap);
+
 #ifdef __cplusplus
 }
 #endif
