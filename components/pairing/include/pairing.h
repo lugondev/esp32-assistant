@@ -13,6 +13,10 @@ aa_disconnect_t aa_classify_disconnect(int handshake_status, const char *goodbye
 
 int aa_parse_pair_status(const char *json, char *token_out, int token_cap);
 
+int aa_load_device_token(char *out, int cap);
+int aa_save_device_token(const char *token);
+int aa_clear_device_token(void);
+
 #ifdef __cplusplus
 }
 #endif
