@@ -88,6 +88,15 @@ config AA_AUTO_WAKE
         opens the gateway WebSocket immediately, instead of waiting for a physical
         Wake button press. Leave off for normal builds (connect-on-wake).
 
+config AA_MIC_METER
+    bool "Show mic peak level on the display (mic bring-up)"
+    default n
+    help
+        Dev/bring-up: skip the gateway and render the mic's last read count +
+        peak amplitude on the panel (~5x/sec) so a silent vs working mic is
+        visible without the serial console. Takes precedence over AA_AUTO_WAKE.
+        Leave off for normal builds.
+
 config AA_SKIP_DISPLAY_INIT
     bool "Skip display panel hardware init (bring-up isolation)"
     default n

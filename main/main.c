@@ -218,6 +218,23 @@ typedef struct {
 } status_msg_t;
 static QueueHandle_t s_status_q;
 
+#if CONFIG_AA_MIC_METER
+// TEMP mic meter (bring-up, local — do not commit): mic_task publishes its last
+// read's sample count + peak amplitude; mic_meter_task shows them on the OLED so
+// a silent vs working mic is visible without a serial console. Skips the gateway.
+static volatile int s_mic_peak, s_mic_got;
+static void mic_meter_task(void *arg) {
+    (void)arg;
+    for (;;) {
+        status_msg_t m = { .has_line2 = true };
+        strncpy(m.line1, "Mic level", sizeof(m.line1) - 1);
+        snprintf(m.line2, sizeof(m.line2), "g %d p %d", s_mic_got, s_mic_peak);
+        if (s_status_q) xQueueSend(s_status_q, &m, 0);
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+}
+#endif
+
 // Restores whatever status line the volume overlay ("Volume NN%") is
 // temporarily covering up, 0.5s after the last volume button press.
 static esp_timer_handle_t s_volume_revert_timer;
@@ -799,6 +816,11 @@ static void mic_task(void *arg) {
     static pkt_t p;   // single mic_task instance; xQueueSend copies it out
     for (;;) {
         int got = audio_mic_read(pcm, OPUS_UP_SAMPLES);   // keeps I2S draining always
+#if CONFIG_AA_MIC_METER
+        { int peak = 0;
+          for (int i = 0; i < got && i < OPUS_UP_SAMPLES; i++) { int a = pcm[i] < 0 ? -pcm[i] : pcm[i]; if (a > peak) peak = a; }
+          s_mic_peak = peak; s_mic_got = got; }
+#endif
         if (got != OPUS_UP_SAMPLES) { vTaskDelay(pdMS_TO_TICKS(10)); continue; }
         // Only stream when the user has activated the conversation (Wake button),
         // the session is ready, and we're not playing the bot (half-duplex).
@@ -1076,21 +1098,25 @@ void app_main(void) {
 #else
     #define MIC_TASK_STACK 40960
 #endif
-    // Priority 3 (below spk=6 and the esp_websocket receive task): on the
-    // single-core C3, a priority-5 mic_task's ~33ms opus_encode starved the WS
-    // receive task, so downlink frames batched in TCP and flushed in a burst
-    // that overran the jitter buffer (most TTS audio dropped -> "no sound"). At
-    // priority 3 the WS/spk path preempts encode and downlink stays paced.
-    if (xTaskCreatePinnedToCore(mic_task, "mic", MIC_TASK_STACK, NULL, 3, NULL, APP_CPU_AUDIO) != pdPASS)
+    // Priority 5 (above the ws receive task, below spk=6): the mic encode must
+    // run promptly to keep uplink audio smooth — starving it choppy the audio and
+    // STT accuracy collapsed. The downlink burst that motivated an earlier
+    // lower-priority experiment is handled by the ring buffer, not scheduling.
+    if (xTaskCreatePinnedToCore(mic_task, "mic", MIC_TASK_STACK, NULL, 5, NULL, APP_CPU_AUDIO) != pdPASS)
         ESP_LOGE(TAG, "mic task create failed (out of internal RAM for a %d B stack)", MIC_TASK_STACK);
-    xTaskCreatePinnedToCore(uplink_task, "uplink", 4096, NULL, 3, NULL, APP_CPU_AUDIO);
+    xTaskCreatePinnedToCore(uplink_task, "uplink", 4096, NULL, 5, NULL, APP_CPU_AUDIO);
 
     // Connect-on-wake: the WS stays closed (asleep) until the user presses Wake.
     // No gateway connection is held while idle. Routed through s_status_q (not
     // a direct display_show call) so it's status_task — not app_main — that
     // touches the panel, same isolation rule as every other idle transition;
     // status_task is already running by this point.
-#if CONFIG_AA_AUTO_WAKE
+#if CONFIG_AA_MIC_METER
+    // Bring-up: show the mic level on the OLED, skip the gateway. peak jumps when
+    // you speak => mic captures; g stays 0 => I2S RX not clocking (wiring).
+    xTaskCreate(mic_meter_task, "mic_meter", 3072, NULL, 3, NULL);
+    ESP_LOGI(TAG, "mic meter mode (CONFIG_AA_MIC_METER)");
+#elif CONFIG_AA_AUTO_WAKE
     // Dev: connect to the gateway at boot without a physical Wake button —
     // mirrors the BTN_WAKE (not-active) path. Remove for production.
     s_active = true;

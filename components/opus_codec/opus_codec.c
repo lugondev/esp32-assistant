@@ -15,16 +15,11 @@ esp_err_t opus_codec_init(void) {
     opus_encoder_ctl(s_enc, OPUS_SET_SIGNAL(OPUS_SIGNAL_VOICE));
     // Lower complexity: much less CPU (and some stack) on ESP32 for a barely
     // perceptible quality drop at voice bitrates — standard for embedded Opus.
-    // The single-core C3 (no second core to run WiFi on) can't afford
-    // complexity 3: SILK-wideband encode hit ~45ms of the 60ms frame budget,
-    // starving WiFi + the idle task (task-watchdog trips). Complexity 0 cuts
-    // that to leave the core time for everything else; at 24kbps VOIP the STT
-    // quality difference is negligible.
-#if CONFIG_IDF_TARGET_ESP32C3
-    opus_encoder_ctl(s_enc, OPUS_SET_COMPLEXITY(0));
-#else
+    // Complexity 3 on both: complexity 0 on the C3 measurably degraded uplink
+    // audio and STT accuracy dropped hard (mostly-wrong transcripts). Complexity
+    // 3 restores it; the single-core CPU cost (~45ms of the 60ms frame) only
+    // trips the (non-fatal) task-watchdog warning, which is acceptable.
     opus_encoder_ctl(s_enc, OPUS_SET_COMPLEXITY(3));
-#endif
     s_dec = opus_decoder_create(OPUS_DOWN_RATE, 1, &err);
     if (err != OPUS_OK || !s_dec) { ESP_LOGE(TAG, "dec create %d", err); return ESP_FAIL; }
     return ESP_OK;
