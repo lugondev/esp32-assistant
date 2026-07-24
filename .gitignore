@@ -35,3 +35,4 @@ sdkconfig.wokwi.generated.old
 wokwi-api.h
 test/test_battery_logic
 test/test_statusbar
+test/test_pairing_logic

@@ -1098,13 +1098,13 @@ void app_main(void) {
 #else
     #define MIC_TASK_STACK 40960
 #endif
-    // Priority 5 (above the ws receive task, below spk=6): the mic encode must
-    // run promptly to keep uplink audio smooth — starving it choppy the audio and
-    // STT accuracy collapsed. The downlink burst that motivated an earlier
-    // lower-priority experiment is handled by the ring buffer, not scheduling.
-    if (xTaskCreatePinnedToCore(mic_task, "mic", MIC_TASK_STACK, NULL, 5, NULL, APP_CPU_AUDIO) != pdPASS)
+    // Priority 4 (below spk=6, above the UI/button/idle tasks): high enough for
+    // prompt mic encode + smooth uplink, but NOT so high it monopolizes the
+    // single core and starves the UI/button/voice tasks (priority 5 + complexity
+    // 3 did exactly that — device felt hung). Paired with opus complexity 1.
+    if (xTaskCreatePinnedToCore(mic_task, "mic", MIC_TASK_STACK, NULL, 4, NULL, APP_CPU_AUDIO) != pdPASS)
         ESP_LOGE(TAG, "mic task create failed (out of internal RAM for a %d B stack)", MIC_TASK_STACK);
-    xTaskCreatePinnedToCore(uplink_task, "uplink", 4096, NULL, 5, NULL, APP_CPU_AUDIO);
+    xTaskCreatePinnedToCore(uplink_task, "uplink", 4096, NULL, 4, NULL, APP_CPU_AUDIO);
 
     // Connect-on-wake: the WS stays closed (asleep) until the user presses Wake.
     // No gateway connection is held while idle. Routed through s_status_q (not
