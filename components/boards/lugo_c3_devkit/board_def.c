@@ -14,8 +14,12 @@
 // DevKitM-1 pin notes: GPIO8 = onboard RGB LED (WS2812), GPIO9 = BOOT button,
 // GPIO2/8/9 are strapping, GPIO18/19 are native USB (not for peripherals).
 static const i2s_fd_cfg_t fd_cfg = {
-    .bclk = 7, .ws = 3, .mic_data = 10, .spk_data = 6,
-    .mic_bclk = 1, .mic_ws = 2,   // mic on its own SCK/WS pins -> fan out clock
+    // Two independent simplex channels on the one I2S controller: the speaker
+    // (MAX98357A) and mic (INMP441) each get their OWN bclk/ws, wired to
+    // separate pins — like xiaozhi's NoAudioCodecSimplex. Sharing one clock
+    // (full-duplex) left the C3 RX unsampled (mic read silence).
+    .bclk = 7, .ws = 3, .spk_data = 6,          // MAX98357A: BCLK 7, LRC 3, DIN 6
+    .mic_bclk = 1, .mic_ws = 2, .mic_data = 10, // INMP441: SCK 1, WS 2, SD 10
 };
 // Same pins carry I2C (SSD1306) or SPI (ST7789); ST7789 adds dc/rst/bl.
 static const display_ssd1306_cfg_t ssd1306_cfg = { .scl = 5, .sda = 4, .i2c_addr = 0x3C };

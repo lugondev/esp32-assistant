@@ -122,8 +122,58 @@ static volatile bool s_welcomed_once = false;
 // ~1.5KB ≈ 48KB, which would be far too much internal SRAM to pin down.
 // Shared by the downlink jitter buffer and the mic->uplink hand-off.
 typedef struct { int len; uint8_t data[OPUS_MAX_PACKET]; } pkt_t;
+// pkt_t is ~1.5KB, so each queue's storage is PKT_QUEUE_DEPTH*1.5KB. On the
+// PSRAM-less C3 that storage falls back to internal RAM (see app_main), where a
+// depth-16 pair (~48KB) both starves the heap and fragments it below what
+// mic_task's opus-encode stack needs. Audio frames are ~180B at 24kbps/60ms, so
+// depth 8 (~24KB pair, ~480ms of buffering) is ample there.
+#if CONFIG_IDF_TARGET_ESP32C3
+#define PKT_QUEUE_DEPTH 4     // C3: uplink only (downlink is the ring buffer); real-time paced, so shallow. Keeps internal RAM for the WS task.
+#else
 #define PKT_QUEUE_DEPTH 16
-static QueueHandle_t s_pktq;   // jitter buffer; depth ~16*60ms ceiling
+#endif
+static QueueHandle_t s_uplinkq;   // mic->uplink hand-off (declared here; used below)
+
+// Downlink jitter buffer, behind dl_*() so the two targets differ in storage
+// only. The gateway bursts a whole TTS reply (~74 frames) far faster than
+// real-time playback, so the buffer must hold the burst, not just smooth jitter.
+//   S3 (PSRAM, already working): keep the proven fixed-slot pkt_t queue verbatim
+//     — storage in PSRAM, depth 16. UNCHANGED.
+//   C3 (no PSRAM): a fixed 1.5KB/slot queue deep enough for a burst can't fit
+//     internal RAM, so use a NoSplit ring buffer that stores each Opus frame at
+//     its true ~200B length — ~90 frames in 20KB, enough for a full reply.
+#if CONFIG_IDF_TARGET_ESP32C3
+#include "freertos/ringbuf.h"
+#define DL_RB_BYTES 16384   /* ~75 Opus frames (~4.5s) — a full TTS burst, within the C3 RAM budget */
+static RingbufHandle_t s_dl_rb;
+static volatile int s_dl_count;   // frames buffered (for prebuffer priming)
+static inline void dl_init(void) { s_dl_rb = xRingbufferCreate(DL_RB_BYTES, RINGBUF_TYPE_NOSPLIT); configASSERT(s_dl_rb); }
+static inline bool dl_push(const uint8_t *d, int len) {
+    if (xRingbufferSend(s_dl_rb, d, (size_t)len, 0) != pdTRUE) return false;
+    s_dl_count++; return true;
+}
+static inline bool dl_pop(uint8_t *out, int *len, TickType_t wait) {
+    size_t sz = 0; void *it = xRingbufferReceive(s_dl_rb, &sz, wait);
+    if (!it) return false;
+    memcpy(out, it, sz); *len = (int)sz;
+    vRingbufferReturnItem(s_dl_rb, it); s_dl_count--; return true;
+}
+static inline void dl_flush(void) { static uint8_t t[OPUS_MAX_PACKET]; int l; while (dl_pop(t, &l, 0)) {} }
+static inline int  dl_count(void) { return s_dl_count; }
+#else
+static QueueHandle_t s_pktq;   // jitter buffer; depth ~N*60ms ceiling
+static inline void dl_init(void) { /* created in app_main (PSRAM static storage) */ }
+static inline bool dl_push(const uint8_t *d, int len) {
+    static pkt_t p; memcpy(p.data, d, (size_t)len); p.len = len;   // single writer (ws task)
+    return xQueueSend(s_pktq, &p, 0) == pdTRUE;
+}
+static inline bool dl_pop(uint8_t *out, int *len, TickType_t wait) {
+    static pkt_t p; if (xQueueReceive(s_pktq, &p, wait) != pdTRUE) return false;  // single reader (spk_task)
+    memcpy(out, p.data, (size_t)p.len); *len = p.len; return true;
+}
+static inline void dl_flush(void) { xQueueReset(s_pktq); }
+static inline int  dl_count(void) { return (int)uxQueueMessagesWaiting(s_pktq); }
+#endif
 
 // Prime the jitter buffer before starting playback so a reply doesn't underrun
 // between sentence chunks. The gateway bursts each chunk's Opus frames then pauses
@@ -680,7 +730,7 @@ static void on_event(const lugo_event_t *ev) {
         s_state = APP_LISTENING;
         ws_client_set_reconnect(false);
         wifi_sta_set_perf_mode(false);
-        xQueueReset(s_pktq);   // flush any buffered downlink audio
+        dl_flush();   // flush any buffered downlink audio
         audio_spk_reset();
         opus_codec_reset();
         // Revoke check: a static CONFIG_AA_DEVICE_TOKEN override can never be
@@ -733,17 +783,15 @@ static void on_audio(const uint8_t *data, int len) {
     // put on the wire before it received our abort, so the bot doesn't briefly
     // resume playing after the "stop."
     if (s_state != APP_SPEAKING) return;
-    // Staged in a static (single writer: the ws task) rather than 1.5KB of
-    // the ws task's 8KB stack; xQueueSend copies it out. Full queue = drop.
-    static pkt_t p;
-    memcpy(p.data, data, len); p.len = len;
-    xQueueSend(s_pktq, &p, 0);
+    // dl_push copies the frame into the downlink buffer (single writer: the ws
+    // task). Full buffer = drop.
+    dl_push(data, len);
 }
 
 // Mirrors xiaozhi-esp32's architecture: the audio-capture task only encodes
 // and queues; a separate uplink_task owns the ws_client_send_audio() call.
 // (opus_encode is the stack-heavy part — see mic_task's stack size below.)
-static QueueHandle_t s_uplinkq;
+// s_uplinkq is declared up top (near the downlink buffer).
 
 static void mic_task(void *arg) {
     (void)arg;
@@ -786,7 +834,7 @@ static void spk_task(void *arg) {
             // committed DMA, and reset the decoder so the next reply is clean.
             // The button task already set LISTENING + showed "Listening".
             s_barge_in = false;
-            xQueueReset(s_pktq);
+            dl_flush();
             audio_spk_reset();
             opus_codec_reset();
             priming = true;
@@ -797,15 +845,15 @@ static void spk_task(void *arg) {
             // (s_turn_ending) so the buffered tail must flush even if short. q==0 just
             // keeps us idle here. Keyed on s_turn_ending, not s_state, because the turn
             // now stays APP_SPEAKING until this task drains it.
-            UBaseType_t q = uxQueueMessagesWaiting(s_pktq);
+            int q = dl_count();
             if (q == 0 || (q < SPK_PREBUFFER_FRAMES && !s_turn_ending)) {
                 vTaskDelay(pdMS_TO_TICKS(10));
                 continue;
             }
             priming = false;
         }
-        if (xQueueReceive(s_pktq, &p, pdMS_TO_TICKS(100)) != pdTRUE) {
-            priming = true;   // queue drained — re-prime before the next burst
+        if (!dl_pop(p.data, &p.len, pdMS_TO_TICKS(100))) {
+            priming = true;   // buffer drained — re-prime before the next burst
             if (s_turn_ending) {
                 // Playback of the reply has fully drained. Let the last I2S DMA buffer
                 // finish and the room echo decay before reopening the mic, so we don't
@@ -949,21 +997,25 @@ void app_main(void) {
     display_show("WiFi OK", "Starting…");
     ESP_ERROR_CHECK(opus_codec_init());
 
-    // By-value packet queues with off-TCB item storage (see pkt_t): only the
-    // small StaticQueue_t bookkeeping stays in internal RAM. Prefer PSRAM, but
-    // fall back to internal RAM on SoCs without it (e.g. ESP32-C3), where
-    // MALLOC_CAP_SPIRAM returns NULL — otherwise boot would abort here.
-    static StaticQueue_t pktq_cb, uplinkq_cb;
+    // Uplink queue (mic->WS): fixed-slot pkt_t queue with off-TCB storage on both
+    // targets. Storage prefers PSRAM, falls back to internal RAM on the PSRAM-less
+    // C3 where MALLOC_CAP_SPIRAM returns NULL.
+    static StaticQueue_t uplinkq_cb;
     const size_t q_bytes = PKT_QUEUE_DEPTH * sizeof(pkt_t);
-    uint8_t *pktq_stor    = heap_caps_malloc(q_bytes, MALLOC_CAP_SPIRAM);
     uint8_t *uplinkq_stor = heap_caps_malloc(q_bytes, MALLOC_CAP_SPIRAM);
-    if (!pktq_stor || !uplinkq_stor) {
-        ESP_LOGW(TAG, "no PSRAM for packet queues; using internal RAM (%u B x2)", (unsigned)q_bytes);
-        if (!pktq_stor)    pktq_stor    = heap_caps_malloc(q_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-        if (!uplinkq_stor) uplinkq_stor = heap_caps_malloc(q_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    }
+    if (!uplinkq_stor) uplinkq_stor = heap_caps_malloc(q_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+#if CONFIG_IDF_TARGET_ESP32C3
+    // Downlink: compact NoSplit ring buffer (see dl_*), sized for a full TTS burst.
+    dl_init();
+    ESP_ERROR_CHECK(uplinkq_stor ? ESP_OK : ESP_ERR_NO_MEM);
+#else
+    // Downlink: the proven fixed-slot pkt_t queue in PSRAM (S3 — UNCHANGED).
+    static StaticQueue_t pktq_cb;
+    uint8_t *pktq_stor = heap_caps_malloc(q_bytes, MALLOC_CAP_SPIRAM);
+    if (!pktq_stor) pktq_stor = heap_caps_malloc(q_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     ESP_ERROR_CHECK(pktq_stor && uplinkq_stor ? ESP_OK : ESP_ERR_NO_MEM);
-    s_pktq    = xQueueCreateStatic(PKT_QUEUE_DEPTH, sizeof(pkt_t), pktq_stor, &pktq_cb);
+    s_pktq = xQueueCreateStatic(PKT_QUEUE_DEPTH, sizeof(pkt_t), pktq_stor, &pktq_cb);
+#endif
     s_uplinkq = xQueueCreateStatic(PKT_QUEUE_DEPTH, sizeof(pkt_t), uplinkq_stor, &uplinkq_cb);
     s_status_q = xQueueCreate(4, sizeof(status_msg_t));
     xTaskCreatePinnedToCore(status_task, "status", 8192, NULL, 4, NULL, APP_CPU_AUDIO);
@@ -1004,9 +1056,34 @@ void app_main(void) {
     // allocs, FreeRTOS tick). 40960 gives a healthy ~17KB margin.
     // spk_task runs opus_decode() (much lighter, ~4.6KB peak); uplink_task
     // owns the ws send chain.
+    // On the PSRAM-less C3 internal RAM is scarce and fragments easily, so keep
+    // these lean: spk_task only runs opus_decode (~4.6KB peak) and uplink_task
+    // only hands opus frames to the WS client. Trimming them frees a large
+    // contiguous block for mic_task's opus-encode stack (see below).
+    // spk_task runs opus_decode + the jitter-buffer/state/display hand-off; 8192
+    // overflowed on the C3 during TTS playback (Stack protection fault -> reboot,
+    // "speaking = no sound"). 16384 is the proven size; the queue-depth cut above
+    // freed the RAM to afford it.
     xTaskCreatePinnedToCore(spk_task, "spk", 16384, NULL, 6, NULL, APP_CPU_AUDIO);
-    xTaskCreatePinnedToCore(mic_task, "mic", 40960, NULL, 5, NULL, APP_CPU_AUDIO);
-    xTaskCreatePinnedToCore(uplink_task, "uplink", 16384, NULL, 5, NULL, APP_CPU_AUDIO);
+    // mic_task runs opus_codec_encode inline, whose SILK-wideband analysis needs
+    // a deep stack (measured 24784 B on the C3). The S3 has PSRAM/headroom for
+    // 40KB; the C3 does not, so it gets a measured-fit 28KB. Created here after
+    // the queues (so a big contiguous block still exists) — the 40KB S3 default
+    // silently pdFAILed on the C3's fragmented heap, leaving no mic task at all
+    // and a permanently silent mic.
+#if CONFIG_IDF_TARGET_ESP32C3
+    #define MIC_TASK_STACK 28672   /* 24784 B opus + margin */
+#else
+    #define MIC_TASK_STACK 40960
+#endif
+    // Priority 3 (below spk=6 and the esp_websocket receive task): on the
+    // single-core C3, a priority-5 mic_task's ~33ms opus_encode starved the WS
+    // receive task, so downlink frames batched in TCP and flushed in a burst
+    // that overran the jitter buffer (most TTS audio dropped -> "no sound"). At
+    // priority 3 the WS/spk path preempts encode and downlink stays paced.
+    if (xTaskCreatePinnedToCore(mic_task, "mic", MIC_TASK_STACK, NULL, 3, NULL, APP_CPU_AUDIO) != pdPASS)
+        ESP_LOGE(TAG, "mic task create failed (out of internal RAM for a %d B stack)", MIC_TASK_STACK);
+    xTaskCreatePinnedToCore(uplink_task, "uplink", 4096, NULL, 3, NULL, APP_CPU_AUDIO);
 
     // Connect-on-wake: the WS stays closed (asleep) until the user presses Wake.
     // No gateway connection is held while idle. Routed through s_status_q (not
