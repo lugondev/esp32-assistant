@@ -51,7 +51,7 @@ table below covers the gateway/hardware settings that remain compile-time.
 | TTS engine | `AA_TTS_ENGINE` | `vieneu` | Must match server |
 | Language hint | `AA_LANGUAGE` | `vi` | BCP-47 code |
 | Chatllm profile (optional) | `AA_PROFILE` | *(empty)* | Named profile from `POST /v1/profiles` — bundles LLM model/system prompt/TTS/MCP/memory |
-| Device WS auth token | `AA_DEVICE_TOKEN` | *(empty)* | Sent as `?device_token=` on `/v1/lugo/stream`; must match the gateway's `DEVICE_AUTH_TOKEN` env var (see note below) |
+| Device token override (optional) | `AA_DEVICE_TOKEN` | *(empty)* | Dev/legacy override. If set, it is used verbatim and **pairing is skipped**. Leave empty for normal per-device pairing (see note below) |
 | ES8311 I2C SDA | `AA_I2C_SDA` | 1 | |
 | ES8311 I2C SCL | `AA_I2C_SCL` | 2 | |
 | I2S MCLK | `AA_I2S_MCLK` | 16 | |
@@ -64,17 +64,28 @@ table below covers the gateway/hardware settings that remain compile-time.
 The GPIO defaults match one common ESP32-S3 dev-kit wiring; **you must set the pin values for
 your specific board** before building.
 
-> **`AA_DEVICE_TOKEN` is a stopgap, not real device auth.** The gateway's
-> `/v1/lugo/stream` requires a credential once server-side auth is enabled
-> (`ADMIN_PASSWORD`/`ADMIN_BOOTSTRAP_PASSWORD` set) — see [`resolve_ws_identity`](../apps/api_gateway/app/core/auth_guard.py).
-> Today every device shares one secret (set here and as the gateway's
-> `DEVICE_AUTH_TOKEN` env var); there is no per-device pairing, revocation, or
-> identity yet. **Revisit this when the real pairing flow lands in firmware**
-> (`POST /v1/devices/pair/init` → show code on display → poll
-> `/v1/devices/pair/status` → persist per-device token in NVS → connect with
-> that instead — server endpoints already exist in
-> [`routes/devices.py`](../apps/api_gateway/app/api/routes/devices.py)), then
-> delete `AA_DEVICE_TOKEN` and the gateway's shared `DEVICE_AUTH_TOKEN`.
+> **Per-device pairing (the normal path).** With `AA_DEVICE_TOKEN` empty, the
+> device gets its own token through the server pairing flow instead of a shared
+> secret. On boot it resolves a token in this order: `AA_DEVICE_TOKEN` override
+> → token stored in NVS → **run pairing**. Pairing calls
+> `POST /v1/devices/pair/init` (serial = eFuse MAC), shows a 6-digit code on the
+> display (and logs it), polls `GET /v1/devices/pair/status` every 3s until a
+> logged-in user claims the code in the web Devices screen, then persists the
+> per-device token to NVS and connects with `?device_token=` on
+> `/v1/lugo/stream` (see [`resolve_ws_identity`](../apps/api_gateway/app/core/auth_guard.py)
+> and [`routes/devices.py`](../apps/api_gateway/app/api/routes/devices.py)).
+>
+> **Revocation.** Removing the device in the web UI revokes its token; the next
+> connection is rejected (WS handshake 401/403) or the server sends a `goodbye`
+> with `reason=account_disabled`. The device then wipes the NVS token and
+> re-enters pairing (showing a fresh code). Ordinary network drops, ping
+> timeouts, and idle `goodbye`s keep the token and just reconnect.
+>
+> **`AA_DEVICE_TOKEN` override** stays as a dev/legacy escape hatch: set it to
+> connect with a fixed token and skip pairing entirely. A revoked override
+> cannot be re-paired away (it is static config) — the device just retries with
+> backoff, so fix the config. The gateway also still accepts the legacy shared
+> `DEVICE_AUTH_TOKEN` env var as a fallback.
 
 ---
 
