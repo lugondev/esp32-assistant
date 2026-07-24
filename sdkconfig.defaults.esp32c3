@@ -9,3 +9,22 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_160=y
 # S3). If opus_encode overruns the 60ms budget (watch "opus encode new max"),
 # the fix is lower opus complexity / less CPU contention, not a higher clock.
 CONFIG_AA_BOARD_LUGO_C3_DEVKIT=y
+
+# ---- C3 low-RAM WiFi/lwip tuning (PERMANENT, safe to commit) ----
+# The C3 has no PSRAM; after WiFi+WS+display+opus only ~23KB internal RAM is free
+# with a ~9KB largest contiguous block — too small for the opus-encode mic task's
+# stack. The default WiFi buffer pool (10 static RX, 32 dyn RX/TX, AMPDU reorder
+# windows) both consumes RAM and fragments the heap. This device only holds one
+# low-bitrate (~24kbps opus) WebSocket, so a small buffer pool is plenty and
+# frees a large contiguous block for the audio task stacks. Throughput drops but
+# audio is unaffected.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=4
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=12
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=12
+# Disable AMPDU: frees the RX block-ack reorder buffers (RX_BA_WIN); negligible
+# impact at audio bitrates.
+# CONFIG_ESP_WIFI_AMPDU_TX_ENABLED is not set
+# CONFIG_ESP_WIFI_AMPDU_RX_ENABLED is not set
+CONFIG_LWIP_MAX_SOCKETS=6
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=2880
+CONFIG_LWIP_TCP_WND_DEFAULT=2880
