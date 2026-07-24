@@ -1098,13 +1098,18 @@ void app_main(void) {
 #else
     #define MIC_TASK_STACK 40960
 #endif
-    // Priority 4 (below spk=6, above the UI/button/idle tasks): high enough for
-    // prompt mic encode + smooth uplink, but NOT so high it monopolizes the
-    // single core and starves the UI/button/voice tasks (priority 5 + complexity
-    // 3 did exactly that — device felt hung). Paired with opus complexity 1.
-    if (xTaskCreatePinnedToCore(mic_task, "mic", MIC_TASK_STACK, NULL, 4, NULL, APP_CPU_AUDIO) != pdPASS)
+    // Mic/uplink priority: 5 on the S3 (dual-core, unchanged). On the single-core
+    // C3, priority 5 + opus complexity 3 let the mic encode monopolize the core
+    // and starve the UI/button/voice tasks (device felt hung); 4 (below spk=6,
+    // above the UI tasks) leaves the core time for everything else.
+#if CONFIG_IDF_TARGET_ESP32C3
+    #define MIC_TASK_PRIO 4
+#else
+    #define MIC_TASK_PRIO 5
+#endif
+    if (xTaskCreatePinnedToCore(mic_task, "mic", MIC_TASK_STACK, NULL, MIC_TASK_PRIO, NULL, APP_CPU_AUDIO) != pdPASS)
         ESP_LOGE(TAG, "mic task create failed (out of internal RAM for a %d B stack)", MIC_TASK_STACK);
-    xTaskCreatePinnedToCore(uplink_task, "uplink", 4096, NULL, 4, NULL, APP_CPU_AUDIO);
+    xTaskCreatePinnedToCore(uplink_task, "uplink", 4096, NULL, MIC_TASK_PRIO, NULL, APP_CPU_AUDIO);
 
     // Connect-on-wake: the WS stays closed (asleep) until the user presses Wake.
     // No gateway connection is held while idle. Routed through s_status_q (not
