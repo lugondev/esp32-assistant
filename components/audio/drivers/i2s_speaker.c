@@ -36,6 +36,12 @@ static esp_err_t spk_init(const void *cfg_v) {
     const i2s_speaker_cfg_t *c = (const i2s_speaker_cfg_t *)cfg_v;
     // MAX98357A takes standard 16-bit I2S directly, no bit-shift on the way out.
     i2s_chan_config_t tx_cc = I2S_CHANNEL_DEFAULT_CONFIG((i2s_port_t)c->port, I2S_ROLE_MASTER);
+    // Underrun (playback drained, e.g. the gap while the gateway synthesizes the
+    // next sentence) emits silence instead of looping the last DMA buffer — else
+    // the last syllable repeats ("...tán gẫu ấu ấu ấu..."). Pairs with a downlink
+    // queue deep enough to hold a whole sentence burst (DL_QUEUE_DEPTH) so frames
+    // aren't dropped mid-sentence. Same idea as the C3 i2s_fd driver.
+    tx_cc.auto_clear = true;
     ESP_ERROR_CHECK(i2s_new_channel(&tx_cc, &s_tx, NULL));
     i2s_std_config_t tx_std = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(16000),

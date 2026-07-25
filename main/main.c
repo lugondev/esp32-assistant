@@ -132,6 +132,12 @@ typedef struct { int len; uint8_t data[OPUS_MAX_PACKET]; } pkt_t;
 #else
 #define PKT_QUEUE_DEPTH 16
 #endif
+// Downlink jitter buffer depth (S3 pkt_t queue). The gateway paces Opus frames
+// to real-time (conversation_opus_pace), so this only needs to absorb network
+// jitter, not a whole burst reply — 32*1.5KB=48KB in PSRAM. (If pacing is off
+// the gateway floods and even 256 overflows on long replies; the fix is pacing,
+// not a bigger buffer.) The C3 uses the compact ring buffer (DL_RB_BYTES).
+#define DL_QUEUE_DEPTH 32
 static QueueHandle_t s_uplinkq;   // mic->uplink hand-off (declared here; used below)
 
 // Downlink jitter buffer, behind dl_*() so the two targets differ in storage
@@ -877,9 +883,14 @@ static void spk_task(void *arg) {
         if (!dl_pop(p.data, &p.len, pdMS_TO_TICKS(100))) {
             priming = true;   // buffer drained — re-prime before the next burst
             if (s_turn_ending) {
-                // Playback of the reply has fully drained. Let the last I2S DMA buffer
-                // finish and the room echo decay before reopening the mic, so we don't
-                // transcribe our own trailing audio (the self-talk loop). THEN listen.
+                // Push the last real frames fully out with a short silence tail so
+                // auto_clear doesn't silence the final syllable at the underrun
+                // boundary (audio_spk_write blocks, so the silence follows the last
+                // real audio through the DMA — tail plays in full, then quiet).
+                static const int16_t silence[240] = {0};
+                for (int i = 0; i < 8; i++) audio_spk_write(silence, 240);  // ~120ms
+                // Let the last I2S DMA buffer finish and the room echo decay before
+                // reopening the mic, so we don't transcribe our own trailing audio.
                 vTaskDelay(pdMS_TO_TICKS(SPK_TAIL_GUARD_MS));
                 s_turn_ending = false;
                 s_state = APP_LISTENING;
@@ -1031,12 +1042,14 @@ void app_main(void) {
     dl_init();
     ESP_ERROR_CHECK(uplinkq_stor ? ESP_OK : ESP_ERR_NO_MEM);
 #else
-    // Downlink: the proven fixed-slot pkt_t queue in PSRAM (S3 — UNCHANGED).
+    // Downlink: fixed-slot pkt_t queue in PSRAM, DL_QUEUE_DEPTH deep so a whole
+    // bursted TTS sentence fits (was PKT_QUEUE_DEPTH=16 -> dropped mid-sentence).
     static StaticQueue_t pktq_cb;
-    uint8_t *pktq_stor = heap_caps_malloc(q_bytes, MALLOC_CAP_SPIRAM);
-    if (!pktq_stor) pktq_stor = heap_caps_malloc(q_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const size_t dl_bytes = DL_QUEUE_DEPTH * sizeof(pkt_t);
+    uint8_t *pktq_stor = heap_caps_malloc(dl_bytes, MALLOC_CAP_SPIRAM);
+    if (!pktq_stor) pktq_stor = heap_caps_malloc(dl_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     ESP_ERROR_CHECK(pktq_stor && uplinkq_stor ? ESP_OK : ESP_ERR_NO_MEM);
-    s_pktq = xQueueCreateStatic(PKT_QUEUE_DEPTH, sizeof(pkt_t), pktq_stor, &pktq_cb);
+    s_pktq = xQueueCreateStatic(DL_QUEUE_DEPTH, sizeof(pkt_t), pktq_stor, &pktq_cb);
 #endif
     s_uplinkq = xQueueCreateStatic(PKT_QUEUE_DEPTH, sizeof(pkt_t), uplinkq_stor, &uplinkq_cb);
     s_status_q = xQueueCreate(4, sizeof(status_msg_t));
