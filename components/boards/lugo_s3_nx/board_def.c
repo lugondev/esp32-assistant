@@ -7,11 +7,12 @@
 
 #if CONFIG_IDF_TARGET_ESP32S3
 
-// Lugo S3 devkit: MAX98357A + INMP441 on dual I2S (mic I2S_NUM_0, speaker
-// I2S_NUM_1). The panel is auto-detected — an SSD1306 (I2C) if one ACKs on the
-// display pins, otherwise the ST7789 (SPI on the same physical pins). This one
-// board replaces the old lugo-s3-ssd1306 / lugo-s3-st7789 split (they were the
-// same board, only the soldered panel differed).
+// Lugo S3 NX: for ESP32-S3 N-series modules (N16R8, N8R8, ...). MAX98357A +
+// INMP441 on dual I2S (mic I2S_NUM_0, speaker I2S_NUM_1). The panel is
+// auto-detected — an SSD1306 (I2C) if one ACKs on the display pins, otherwise
+// the ST7789 (SPI on the same physical pins). This one board replaces the old
+// lugo-s3-ssd1306 / lugo-s3-st7789 split (they were the same board, only the
+// soldered panel differed).
 static const i2s_mic_cfg_t mic_cfg = {
     .port = 0, .ws = CONFIG_AA_MIC_WS, .sck = CONFIG_AA_MIC_SCK, .sd = CONFIG_AA_MIC_SD,
 };
@@ -32,8 +33,8 @@ static const buttons_gpio_cfg_t buttons_cfg = {
 
 static bool match(void) { return true; }  // the S3 autodetect default
 
-LUGO_BOARD_REGISTER(board_lugo_s3_devkit) {
-    .name        = "lugo-s3-devkit",
+LUGO_BOARD_REGISTER(board_lugo_s3_nx) {
+    .name        = "lugo-s3-nx",
     .mic         = &i2s_mic_ops,
     .speaker     = &i2s_speaker_ops,
     .display     = NULL,                  // NULL → auto-detect (see display_cfg)

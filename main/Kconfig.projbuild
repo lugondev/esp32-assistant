@@ -123,8 +123,8 @@ choice AA_BOARD
     prompt "Target board"
     default AA_BOARD_AUTODETECT
 
-config AA_BOARD_LUGO_S3_DEVKIT
-    bool "Lugo S3 devkit (auto SSD1306/ST7789 + MAX98357A/INMP441 dual-I2S)"
+config AA_BOARD_LUGO_S3_NX
+    bool "Lugo S3 NX — N-series modules N16R8/N8R8 (auto SSD1306/ST7789 + MAX98357A/INMP441 dual-I2S)"
     depends on IDF_TARGET_ESP32S3
 
 config AA_BOARD_LUGO_S3_SUPERMINI
@@ -153,7 +153,7 @@ config AA_BOARD_FORCE
 
 config AA_BOARD_NAME
     string
-    default "lugo-s3-devkit" if AA_BOARD_LUGO_S3_DEVKIT
+    default "lugo-s3-nx" if AA_BOARD_LUGO_S3_NX
     default "lugo-s3-supermini" if AA_BOARD_LUGO_S3_SUPERMINI
     default "lugo-s3-wroom" if AA_BOARD_LUGO_S3_WROOM
     default "lugo-c3-devkit" if AA_BOARD_LUGO_C3_DEVKIT
