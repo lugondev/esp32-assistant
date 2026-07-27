@@ -18,14 +18,17 @@ static const char *TAG = "display";
 #define DISP_WIDTH      240
 #define DISP_HEIGHT     240
 
-// SPI pixel clock. 20MHz (~2.5MB/s) flushes the robot-eyes dirty band
-// (~57KB) in ~25ms — the difference between the old 4MHz's ~8fps ceiling
-// and a comfortably animated HUD. ST7789 silicon is generally happy well
-// past 40MHz; the practical limit here is the wiring (each corrupted
-// transaction misdirects one chunk's row-address-set, showing up as a
-// stray shifted band). If those artifacts appear on a jumper-wired panel,
-// step back down toward 10MHz.
-#define DISP_PCLK_HZ    (20 * 1000 * 1000)
+// SPI pixel clock. The progression here was 4MHz (~8fps ceiling) -> 20MHz
+// (~25ms per robot-eyes dirty band, ~57KB) -> 40MHz (~12ms). ST7789 silicon is
+// generally happy well past 40MHz; the practical limit is the WIRING, not the
+// panel — each corrupted transaction misdirects one chunk's row-address-set and
+// shows up as a stray shifted band. Halving the flush time matters beyond
+// frame rate: status_task blocks for the whole flush, and on the S3 that block
+// is competing with opus for the PSRAM bus (the render buffers are in PSRAM, so
+// spi_master bounce-copies every chunk out of it).
+// If banding artifacts appear on jumper-wired panels, step back to 20MHz — this
+// is the first thing to revert when the display misbehaves.
+#define DISP_PCLK_HZ    (40 * 1000 * 1000)
 
 static esp_lcd_panel_handle_t s_panel;
 

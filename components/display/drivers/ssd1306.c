@@ -126,7 +126,15 @@ static esp_err_t ssd1306_init(const void *cfg_v) {
         .lcd_param_bits = 8,
         // 100kHz (not 400): tolerant of weak/absent external pull-ups and long
         // dupont wiring during bring-up. A status/eyes panel doesn't need 400.
-        .scl_speed_hz = 100000,
+        // 100kHz (the I2C "standard mode" default) made every panel write
+        // painfully slow: a full 128x64 frame is 1KB, and at 100kbit/s with the
+        // ack bit that is ~92ms of blocked status_task per push_all(). 400kHz
+        // ("fast mode", the SSD1306 datasheet's rated maximum) cuts that to
+        // ~23ms. Most modules happily run 1MHz, but that is out of spec — only
+        // reach for it if 400kHz proves solid first and the extra ~17ms is
+        // actually needed. Symptom of pushing too far: garbled/torn rows or i2c
+        // timeout errors in the log.
+        .scl_speed_hz = 400000,
     };
     DISP_TRY(esp_lcd_new_panel_io_i2c(bus_handle, &io_config, &io_handle));
 
@@ -178,12 +186,21 @@ static void ssd1306_show(const char *line1, const char *line2) {
 // bars) — a bigger palette change may need revisiting this. This is also
 // the point where gradient fidelity (e.g. robot_eyes' glow halo) collapses
 // to a hard on/off edge on real monochrome hardware.
+// Weights fold the 5/6-bit -> 8-bit expansion INTO the luma coefficients, so
+// this is the same threshold as before with none of the divides. Derivation:
+//   r8 = r5*255/31 = r5*8.226,  g8 = g6*255/63 = g6*4.048,  b8 = b5*8.226
+//   luma*100 = r8*30 + g8*59 + b8*11 = r5*246.8 + g6*238.8 + b5*90.5
+// so `luma > 20` becomes `score > 2000` with the integer weights below.
+// Worth doing because this runs per pixel: a full 128x64 flush is 8192 calls,
+// and four integer divides each is ~5ms of C3 CPU per frame for nothing.
+// Spot checks against the old code: pure blue (0x001F) -> 2790, on (old: 28);
+// pure green (0x07E0) -> 15057, on; a dark navy background -> a few hundred,
+// off. Same gradient-collapse caveat as before applies to robot_eyes' glow.
 static bool pixel_on(uint16_t rgb565) {
-    int r8 = ((rgb565 >> 11) & 0x1F) * 255 / 31;
-    int g8 = ((rgb565 >> 5) & 0x3F) * 255 / 63;
-    int b8 = (rgb565 & 0x1F) * 255 / 31;
-    int luma = (r8 * 30 + g8 * 59 + b8 * 11) / 100;
-    return luma > 20;
+    int score = ((rgb565 >> 11) & 0x1F) * 247
+              + ((rgb565 >> 5) & 0x3F) * 239
+              + (rgb565 & 0x1F) * 90;
+    return score > 2000;
 }
 
 // Not host-tested, same as st7789_flush: exercises real I2C hardware only.
