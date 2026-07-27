@@ -182,6 +182,18 @@ int ws_client_send_audio(const uint8_t *opus, int len) {
     if (!s_connected) return -1;
     // Uplink is RAW opus: the gateway feeds inbound binary straight to the STT
     // opus decoder and does not strip a v3 header.
+    //
+    // portMAX_DELAY is deliberate, despite this being a real-time path where a
+    // bounded timeout looks like the obvious choice. A finite timeout here does
+    // NOT mean "give up on this frame": esp_transport_ws.c's _ws_write() polls
+    // the socket for writability first and returns 0 on timeout, and
+    // esp_websocket_client.c treats a 0-length write as a transport failure and
+    // calls esp_websocket_client_abort_connection(). So a momentary Wi-Fi stall
+    // would tear the WebSocket down and force a full reconnect (with no
+    // `goodbye`, which also feeds the disconnect classifier) instead of costing
+    // one frame. Blocking is the cheaper failure.
+    // The backlog that builds up while this blocks is handled where it can be
+    // handled correctly — mic_task drops the stale queue and resyncs.
     return esp_websocket_client_send_bin(s_client, (const char *)opus, len, portMAX_DELAY);
 }
 

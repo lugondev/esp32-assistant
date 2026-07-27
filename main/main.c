@@ -33,8 +33,16 @@
 // place them on unicore targets.
 #if CONFIG_FREERTOS_UNICORE
 #define APP_CPU_AUDIO tskNO_AFFINITY
+#define APP_CPU_UI    tskNO_AFFINITY
 #else
 #define APP_CPU_AUDIO 1
+// status_task used to share core 1 with mic/spk. It never preempts them (prio
+// 4 vs 5/6), but a display flush is not free to the tasks it runs beside: the
+// render buffers live in PSRAM, so spi_master bounce-copies every chunk out of
+// PSRAM into internal DMA memory, evicting D-cache lines and taking PSRAM bus
+// cycles that opus_encode/opus_decode want. Keep core 1 for audio only and let
+// the UI share core 0 with WiFi, where the work is mostly DMA wait anyway.
+#define APP_CPU_UI    0
 #endif
 
 // Bool Kconfig options are undefined (not 0) when unset — provide a fallback.
@@ -102,6 +110,24 @@ static volatile bool s_active = false;
 // the jitter queue, drops the DMA, and resets the decoder. One-shot flag.
 static volatile bool s_barge_in = false;
 
+// Request that mic_task drop everything the RX DMA has already captured.
+// Serviced by mic_task itself rather than by the requester, for the same reason
+// s_barge_in is serviced by spk_task: the flush restarts the I2S RX channel, and
+// mic_task is the task that owns (and normally sits blocked inside) that
+// channel's read. Requesters only raise the flag.
+//
+// Why it's needed at all: mic_task reads a full 60ms frame BEFORE it re-checks
+// s_state, so the frame in hand at a LISTENING transition was captured up to
+// 60ms earlier — i.e. while the bot was still audible. That frame is what gets
+// transcribed as self-talk. SPK_TAIL_GUARD_MS only hides this at the end of a
+// normal turn (by making that 60ms fall inside the silent guard); on barge-in,
+// where the state flips to LISTENING while the speaker DMA is still draining,
+// nothing hid it at all.
+// Set by: spk_task (turn drained; barge-in serviced) and on_button (barge-in,
+// so the drop starts at the button press rather than whenever spk_task next
+// runs). Cleared by mic_task.
+static volatile bool s_mic_flush_req = false;
+
 // Idle: server `goodbye` is primary; this device-side watchdog is a backup for a
 // silently dropped WS (no goodbye arrives). idle_timeout_s comes from `welcome`.
 static volatile int      s_idle_timeout_s = 0;   // 0 = no device-side timeout
@@ -115,18 +141,33 @@ static volatile uint32_t s_last_activity_s = 0;
 static volatile bool s_welcomed_once = false;
 
 // One Opus packet, queued BY VALUE (xQueueSend copies it): the previous
-// heap-pointer design malloc'd/free'd ~1.5KB on every 60ms frame in both
+// heap-pointer design malloc'd/free'd a packet on every 60ms frame in both
 // directions, churning the internal heap right next to the WiFi stack's own
 // allocations — a slow-fragmentation risk with zero upside. Both queues'
-// storage lives in PSRAM (xQueueCreateStatic in app_main): 2 queues * 16 *
-// ~1.5KB ≈ 48KB, which would be far too much internal SRAM to pin down.
+// storage lives in PSRAM (xQueueCreateStatic in app_main), which is why the
+// slot size below matters: it is multiplied by the queue depth AND copied in
+// full on every send and every receive.
 // Shared by the downlink jitter buffer and the mic->uplink hand-off.
-typedef struct { int len; uint8_t data[OPUS_MAX_PACKET]; } pkt_t;
-// pkt_t is ~1.5KB, so each queue's storage is PKT_QUEUE_DEPTH*1.5KB. On the
-// PSRAM-less C3 that storage falls back to internal RAM (see app_main), where a
-// depth-16 pair (~48KB) both starves the heap and fragments it below what
-// mic_task's opus-encode stack needs. Audio frames are ~180B at 24kbps/60ms, so
-// depth 8 (~24KB pair, ~480ms of buffering) is ample there.
+//
+// AA_PKT_MAX is the per-slot payload capacity, and is deliberately NOT
+// OPUS_MAX_PACKET (1500, the theoretical Opus ceiling). At 1500 each slot was
+// 1.5KB, so every 60ms frame dragged 1.5KB through four copies — in PSRAM,
+// evicting the D-cache lines the audio path wants — to move ~180B of real
+// audio, and the two queues pinned 48KB+24KB of storage to match.
+// What actually travels here is one Opus frame at 24kbps: ~180B at 60ms, or
+// ~360B for the 120ms frames the gateway may send downlink (see
+// OPUS_DOWN_SAMPLES_MAX). 640B keeps ~40% headroom over that worst case — a
+// 120ms frame would have to exceed ~42kbps to overflow it — while cutting slot
+// size, queue storage and per-frame copy cost by 2.3x.
+// Anything larger is dropped with a log rather than silently truncated: see
+// on_audio. If those warnings ever appear, the gateway's downlink bitrate
+// changed and this number should follow it.
+#define AA_PKT_MAX 640
+typedef struct { int len; uint8_t data[AA_PKT_MAX]; } pkt_t;
+// pkt_t is ~644B, so each queue's storage is PKT_QUEUE_DEPTH*644B. On the
+// PSRAM-less C3 that storage falls back to internal RAM (see app_main), where
+// every KB competes with mic_task's opus-encode stack for a large contiguous
+// block — hence the much shallower depth there.
 #if CONFIG_IDF_TARGET_ESP32C3
 #define PKT_QUEUE_DEPTH 4     // C3: uplink only (downlink is the ring buffer); real-time paced, so shallow. Keeps internal RAM for the WS task.
 #else
@@ -134,20 +175,36 @@ typedef struct { int len; uint8_t data[OPUS_MAX_PACKET]; } pkt_t;
 #endif
 // Downlink jitter buffer depth (S3 pkt_t queue). The gateway paces Opus frames
 // to real-time (conversation_opus_pace), so this only needs to absorb network
-// jitter, not a whole burst reply — 32*1.5KB=48KB in PSRAM. (If pacing is off
+// jitter, not a whole burst reply — 32*644B ≈ 21KB in PSRAM. (If pacing is off
 // the gateway floods and even 256 overflows on long replies; the fix is pacing,
 // not a bigger buffer.) The C3 uses the compact ring buffer (DL_RB_BYTES).
 #define DL_QUEUE_DEPTH 32
 static QueueHandle_t s_uplinkq;   // mic->uplink hand-off (declared here; used below)
 
+// Downlink diagnostics, written by the ws task in on_audio(), read+reset by
+// spk_task at the end of each turn. Plain ints: single writer, and a torn read
+// on a diagnostic counter would only misprint a log line.
+// These exist because "words missing from the reply" has (at least) three
+// distinct causes that look identical from the outside, and the code used to
+// report NONE of them:
+//   - the frame never fit our slot        -> s_dl_oversize (see AA_PKT_MAX)
+//   - the frame arrived but the buffer was full -> s_dl_drops (this was the
+//     root cause of the previous cut-audio bug, fixed by DL_QUEUE_DEPTH 16->32;
+//     dl_push's return value has been discarded ever since, so a regression
+//     here would be invisible)
+//   - the buffer ran dry and playback stalled  -> spk_task's `underruns`
+// s_dl_peak (high-water mark vs DL_QUEUE_DEPTH) says how much margin is left.
+static volatile int s_dl_drops, s_dl_peak, s_dl_maxlen, s_dl_oversize;
+
 // Downlink jitter buffer, behind dl_*() so the two targets differ in storage
 // only. The gateway bursts a whole TTS reply (~74 frames) far faster than
 // real-time playback, so the buffer must hold the burst, not just smooth jitter.
-//   S3 (PSRAM, already working): keep the proven fixed-slot pkt_t queue verbatim
-//     — storage in PSRAM, depth 16. UNCHANGED.
-//   C3 (no PSRAM): a fixed 1.5KB/slot queue deep enough for a burst can't fit
-//     internal RAM, so use a NoSplit ring buffer that stores each Opus frame at
-//     its true ~200B length — ~90 frames in 20KB, enough for a full reply.
+//   S3 (PSRAM, already working): the proven fixed-slot pkt_t queue, storage in
+//     PSRAM, DL_QUEUE_DEPTH deep. Structurally unchanged; only the slot size
+//     shrank (see AA_PKT_MAX).
+//   C3 (no PSRAM): a fixed-slot queue deep enough for a burst can't fit internal
+//     RAM even at 644B/slot, so use a NoSplit ring buffer that stores each Opus
+//     frame at its true ~200B length — ~75 frames in 16KB, a full reply.
 #if CONFIG_IDF_TARGET_ESP32C3
 #include "freertos/ringbuf.h"
 #define DL_RB_BYTES 16384   /* ~75 Opus frames (~4.5s) — a full TTS burst, within the C3 RAM budget */
@@ -164,7 +221,7 @@ static inline bool dl_pop(uint8_t *out, int *len, TickType_t wait) {
     memcpy(out, it, sz); *len = (int)sz;
     vRingbufferReturnItem(s_dl_rb, it); s_dl_count--; return true;
 }
-static inline void dl_flush(void) { static uint8_t t[OPUS_MAX_PACKET]; int l; while (dl_pop(t, &l, 0)) {} }
+static inline void dl_flush(void) { static uint8_t t[AA_PKT_MAX]; int l; while (dl_pop(t, &l, 0)) {} }
 static inline int  dl_count(void) { return s_dl_count; }
 #else
 static QueueHandle_t s_pktq;   // jitter buffer; depth ~N*60ms ceiling
@@ -401,6 +458,11 @@ static void status_task(void *arg) {
                 s_voice_busy = true;
                 voice_play(m.voice);
                 vTaskDelay(pdMS_TO_TICKS(SPK_TAIL_GUARD_MS));
+                // Same stale-frame edge as the end of a TTS turn (see
+                // s_mic_flush_req): the frame mic_task is holding when the mute
+                // lifts still contains the clip's tail. This is the exact path
+                // that put "sẵn sàng" in front of what the user actually said.
+                s_mic_flush_req = true;
                 s_voice_busy = false;
             }
         }
@@ -641,6 +703,10 @@ static void on_button(button_id_t id) {
             s_state = APP_LISTENING;
             s_active = true;
             s_barge_in = true;   // spk_task flushes the queue + resets I2S/opus
+            // Start dropping captured audio from the press itself: the speaker
+            // is still playing the bot until spk_task services s_barge_in, and
+            // the mic is already open (state is LISTENING as of the line above).
+            s_mic_flush_req = true;
             s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
             ws_client_send_abort("user");
             send_listening_status();
@@ -717,7 +783,34 @@ static void on_event(const lugo_event_t *ev) {
         xQueueSend(s_status_q, &m, 0);
         break;
     }
-    case LUGO_EV_STT:          ESP_LOGI(TAG, "you: %s", ev->text); break;
+    case LUGO_EV_STT: {
+        ESP_LOGI(TAG, "you: %s", ev->text);
+        // The server has the transcript and is now running the LLM + TTS —
+        // seconds of work (measured: ~10s on a long reply) during which nothing
+        // else updated the screen, so it kept showing "Listening / Speak now"
+        // while the device was really just waiting. Show that it's working, and
+        // show what it heard.
+        //
+        // Display-only, deliberately: s_state stays APP_LISTENING so mic_task's
+        // gate (s_state != APP_LISTENING) is untouched and the uplink keeps
+        // running exactly as before — adding a real APP_THINKING state would
+        // have silently muted the mic here.
+        // Nothing needs to clear this screen: every path out of it (TTS_START,
+        // TTS_STOP, GOODBYE, ERROR, the Wake button) already pushes its own
+        // status message, so there is no way to get stuck on it and no timeout
+        // to maintain.
+        status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true,
+                            .emotion = ROBOT_EMOTION_PONDERING };
+        strncpy(m.line1, "Thinking", sizeof(m.line1) - 1);
+        // ev->text (256B) is wider than line2 — same bounded truncation the
+        // ERROR case below uses, which keeps GCC's -Werror=stringop-truncation
+        // quiet on the riscv (C3) build.
+        size_t tlen = strnlen(ev->text, sizeof(m.line2) - 1);
+        memcpy(m.line2, ev->text, tlen);
+        m.line2[tlen] = '\0';
+        xQueueSend(s_status_q, &m, 0);
+        break;
+    }
     case LUGO_EV_TTS_SENTENCE: ESP_LOGI(TAG, "bot: %s", ev->text); break;
     case LUGO_EV_TTS_START: {
         s_turn_ending = false;
@@ -800,15 +893,30 @@ static void on_event(const lugo_event_t *ev) {
 
 static void on_audio(const uint8_t *data, int len) {
     s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
-    if (len <= 0 || len > OPUS_MAX_PACKET) return;
+    if (len <= 0) return;
+    if (len > AA_PKT_MAX) {
+        // Louder than a silent drop: a frame this big means the gateway's
+        // downlink bitrate/frame size outgrew AA_PKT_MAX, and the symptom
+        // downstream would be mystery gaps in playback. Rate-limited to the
+        // first occurrence so a sustained mismatch can't flood the console
+        // from the ws task.
+        s_dl_oversize++;
+        static bool warned;
+        if (!warned) { warned = true; ESP_LOGW(TAG, "downlink frame %d B > AA_PKT_MAX %d — dropping", len, AA_PKT_MAX); }
+        return;
+    }
+    if (len > s_dl_maxlen) s_dl_maxlen = len;   // what the gateway actually sends
     // Drop frames that arrive when we're not in a speaking turn: after a local
     // barge-in (state forced to LISTENING) this discards audio the server already
     // put on the wire before it received our abort, so the bot doesn't briefly
     // resume playing after the "stop."
     if (s_state != APP_SPEAKING) return;
     // dl_push copies the frame into the downlink buffer (single writer: the ws
-    // task). Full buffer = drop.
-    dl_push(data, len);
+    // task). A full buffer drops the frame — which is audible as a missing word,
+    // so count it instead of discarding the return value silently.
+    if (!dl_push(data, len)) s_dl_drops++;
+    int q = dl_count();
+    if (q > s_dl_peak) s_dl_peak = q;
 }
 
 // Mirrors xiaozhi-esp32's architecture: the audio-capture task only encodes
@@ -822,6 +930,14 @@ static void mic_task(void *arg) {
     static pkt_t p;   // single mic_task instance; xQueueSend copies it out
     for (;;) {
         int got = audio_mic_read(pcm, OPUS_UP_SAMPLES);   // keeps I2S draining always
+        // Checked AFTER the read, so the frame in hand — captured before the
+        // requester flipped us back to LISTENING — is discarded along with the
+        // DMA's contents, instead of being encoded and sent as user speech.
+        if (s_mic_flush_req) {
+            s_mic_flush_req = false;
+            audio_mic_flush();
+            continue;
+        }
 #if CONFIG_AA_MIC_METER
         { int peak = 0;
           for (int i = 0; i < got && i < OPUS_UP_SAMPLES; i++) { int a = pcm[i] < 0 ? -pcm[i] : pcm[i]; if (a > peak) peak = a; }
@@ -834,7 +950,26 @@ static void mic_task(void *arg) {
         int n = opus_codec_encode(pcm, p.data, sizeof p.data);
         if (n > 0) {
             p.len = n;
-            xQueueSend(s_uplinkq, &p, 0);   // drop on overflow
+            if (xQueueSend(s_uplinkq, &p, 0) != pdTRUE) {
+                // A full queue means uplink_task is stuck inside
+                // ws_client_send_audio (a blocked TCP write — see the
+                // portMAX_DELAY note there), so it is PKT_QUEUE_DEPTH frames
+                // behind: ~1s on the S3, ~240ms on the C3.
+                // The old behaviour here was a plain drop-on-overflow, which
+                // discards the NEWEST frame and keeps the oldest — backwards
+                // for real-time audio. It also never recovers: once full, the
+                // queue stays full, so every frame that does get through is
+                // delivered a fixed second late for the rest of the session,
+                // and the conversation stays permanently out of sync.
+                // Drop the whole backlog instead and restart from the current
+                // frame: the audio in there is stale by definition, and
+                // resyncing costs one gap rather than a permanent offset.
+                UBaseType_t dropped = uxQueueMessagesWaiting(s_uplinkq);
+                xQueueReset(s_uplinkq);
+                xQueueSend(s_uplinkq, &p, 0);
+                ESP_LOGW(TAG, "uplink stalled — dropped %u stale frame(s) to resync",
+                         (unsigned)dropped);
+            }
         }
     }
 }
@@ -855,6 +990,13 @@ static void spk_task(void *arg) {
                                          // undersizing this stack-smashed spk_task.
     static pkt_t p;   // single spk_task instance; xQueueReceive copies into it
     bool priming = true;   // build slack before the first frame of each burst
+    // Mid-reply underruns in the current turn: the buffer ran dry while the bot
+    // was still speaking, so playback stalled and re-primed (an audible gap).
+    // Logged per turn because it is the number that decides whether
+    // SPK_PREBUFFER_FRAMES can come down: a steady 0 across turns means the 4
+    // frames (240ms) of startup latency are buying nothing and can be traded
+    // for responsiveness; anything above 0 means the depth is already marginal.
+    int underruns = 0;
     for (;;) {
         if (s_barge_in) {
             // Serviced here (not in the button task) because this task owns the
@@ -865,7 +1007,14 @@ static void spk_task(void *arg) {
             dl_flush();
             audio_spk_reset();
             opus_codec_reset();
+            // The speaker only actually goes quiet on the audio_spk_reset()
+            // above; everything the mic captured up to here is the bot's voice
+            // (on_button already reopened the mic at the button press). Ask for
+            // a second flush at this edge — the one on_button raised covered the
+            // press itself, this one covers the DMA drain since.
+            s_mic_flush_req = true;
             priming = true;
+            underruns = 0;
         }
         if (priming) {
             // Wait for buffer slack before draining. Exceptions that start playback
@@ -881,6 +1030,10 @@ static void spk_task(void *arg) {
             priming = false;
         }
         if (!dl_pop(p.data, &p.len, pdMS_TO_TICKS(100))) {
+            // Ran dry mid-reply (still SPEAKING, turn not ending): that is the
+            // audible stutter SPK_PREBUFFER_FRAMES exists to prevent. Counted
+            // here, reported at the end of the turn below.
+            if (s_state == APP_SPEAKING && !s_turn_ending) underruns++;
             priming = true;   // buffer drained — re-prime before the next burst
             if (s_turn_ending) {
                 // Push the last real frames fully out with a short silence tail so
@@ -892,8 +1045,24 @@ static void spk_task(void *arg) {
                 // Let the last I2S DMA buffer finish and the room echo decay before
                 // reopening the mic, so we don't transcribe our own trailing audio.
                 vTaskDelay(pdMS_TO_TICKS(SPK_TAIL_GUARD_MS));
+                // Everything captured during the guard is our own speech decaying
+                // in the room; drop it so the first uplink frame starts clean.
+                // Raised before the state flip so mic_task can service it as soon
+                // as the mic reopens.
+                s_mic_flush_req = true;
                 s_turn_ending = false;
                 s_state = APP_LISTENING;
+                // One line that separates the three ways a reply loses audio —
+                // see the s_dl_* declarations.
+                ESP_LOGI(TAG, "turn done: underruns=%d dl_drops=%d oversize=%d "
+                              "peakq=%d/%d maxlen=%dB prebuffer=%d",
+                         underruns, s_dl_drops, s_dl_oversize,
+                         s_dl_peak, DL_QUEUE_DEPTH, s_dl_maxlen, SPK_PREBUFFER_FRAMES);
+                underruns = 0;
+                s_dl_drops = s_dl_peak = s_dl_oversize = 0;
+                // s_dl_maxlen deliberately NOT reset: it is a property of the
+                // gateway's encoder, not of this turn, and the useful question
+                // is the largest frame ever seen against AA_PKT_MAX.
                 if (s_active) send_listening_status();
             }
             continue;
@@ -1053,7 +1222,7 @@ void app_main(void) {
 #endif
     s_uplinkq = xQueueCreateStatic(PKT_QUEUE_DEPTH, sizeof(pkt_t), uplinkq_stor, &uplinkq_cb);
     s_status_q = xQueueCreate(4, sizeof(status_msg_t));
-    xTaskCreatePinnedToCore(status_task, "status", 8192, NULL, 4, NULL, APP_CPU_AUDIO);
+    xTaskCreatePinnedToCore(status_task, "status", 8192, NULL, 4, NULL, APP_CPU_UI);
     const esp_timer_create_args_t vol_timer_args = {
         .callback = &volume_revert_cb, .name = "vol_revert",
     };
