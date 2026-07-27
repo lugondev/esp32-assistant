@@ -6,3 +6,25 @@ CONFIG_SPIRAM_SPEED_80M=y
 # Opus encode of real speech at 160MHz/-Og exceeded the 60ms frame budget
 # (IDLE1 starved → task WDT). Run at 240MHz, -O2.
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# ---- Cache sizing (PERMANENT, safe to commit) ----
+# Both caches were at the IDF defaults (16KB I / 32KB D, 32-byte lines), which
+# are sized for a typical app, not for this one. Two workloads here are unusually
+# cache-hostile:
+#   - opus_encode/decode execute ~200KB of SILK+CELT code out of flash; a 16KB
+#     I-cache thrashes on it, and every miss stalls on a flash read.
+#   - the Opus jitter buffers and every display buffer live in PSRAM, so the
+#     D-cache is the only thing standing between the audio path and the (slow)
+#     octal PSRAM bus.
+# The D-cache also moves to 64-byte lines, which fetch twice as much per miss —
+# a good fit for the linear buffer scans the audio and display paths do. The
+# I-cache stays at 32-byte lines because the S3's instruction cache has no 64B
+# option at all (only 16B/32B — see esp_system/port/soc/esp32s3/Kconfig.cache);
+# only its size is tunable.
+# Cost is internal SRAM: the caches are carved out of it, so this trades ~48KB
+# of heap for the throughput. The S3 has the room; the C3 has no equivalent
+# knobs (fixed 16KB shared I/D cache), which is exactly why the flash-QIO
+# change in sdkconfig.defaults matters more over there.
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y

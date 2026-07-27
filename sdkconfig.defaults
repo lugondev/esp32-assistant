@@ -5,6 +5,19 @@ CONFIG_FREERTOS_HZ=1000
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 
+# Quad I/O flash (was the IDF default DIO): 4 data lines instead of 2, so every
+# instruction-cache miss refills at twice the rate. This matters far more here
+# than on a typical app — the Opus encoder (SILK+CELT, ~200KB of code) runs from
+# flash through a small I-cache (16KB on C3, 16KB by default on S3), so
+# opus_encode's inner loops miss constantly and each miss is a flash read. The
+# 60ms encode budget on the single-core C3 is the tightest constraint in the
+# firmware, so this is the cheapest CPU we can buy.
+# NOTE: changing flash mode requires reflashing the BOOTLOADER too
+# (`idf.py flash`, not just `app-flash`). Both the C3-MINI-1 and the S3 N-series
+# modules carry quad-capable flash; if a board ever fails to boot after this,
+# revert to CONFIG_ESPTOOLPY_FLASHMODE_DIO=y.
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+
 # Default 512 bytes is too small for real phone browsers hitting the
 # provisioning captive portal (headers exceed it → HTTP 431).
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
