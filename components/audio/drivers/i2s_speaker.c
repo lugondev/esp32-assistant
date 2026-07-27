@@ -71,12 +71,17 @@ static int spk_write(const int16_t *pcm, int samples) {
                                 &total_written, portMAX_DELAY);
     } else {
         static int16_t scratch[SPK_SCRATCH];
+        // Q8 gain instead of a per-sample divide by 100: at 16kHz this loop runs
+        // 960 times per frame, and the shift is free where the divide is not.
+        // Rounding differs by at most 1 LSB (arithmetic shift floors, integer
+        // division truncates toward zero) — inaudible at any volume.
+        int gain_q8 = (vol * 256 + 50) / 100;
         int off = 0;
         while (off < samples) {
             int chunk = samples - off;
             if (chunk > SPK_SCRATCH) chunk = SPK_SCRATCH;
             for (int i = 0; i < chunk; i++)
-                scratch[i] = (int16_t)(((int32_t)pcm[off + i] * vol) / 100);
+                scratch[i] = (int16_t)(((int32_t)pcm[off + i] * gain_q8) >> 8);
             size_t bw = 0;
             err = i2s_channel_write(s_tx, scratch, chunk * sizeof(int16_t),
                                     &bw, portMAX_DELAY);

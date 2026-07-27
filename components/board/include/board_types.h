@@ -16,6 +16,12 @@ typedef enum {
 typedef struct {
     esp_err_t (*init)(const void *cfg);
     int       (*read)(int16_t *pcm, int samples);   // returns frames read
+    // Discard whatever the RX DMA has already captured. Optional (may be NULL —
+    // audio_mic_flush() checks). MUST only be called from the task that owns
+    // the channel, i.e. the one that calls read(): it restarts the channel, and
+    // doing that underneath a task blocked inside read() is not a supported
+    // ordering. See mic_task in main.c for the request-flag pattern.
+    void      (*flush)(void);
 } mic_ops_t;
 
 typedef struct {

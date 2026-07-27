@@ -28,6 +28,13 @@ int audio_mic_read(int16_t *pcm, int samples) {
     return s_mic->read(pcm, samples);
 #endif
 }
+void audio_mic_flush(void) {
+#if !CONFIG_AA_SKIP_AUDIO_INIT
+    // Optional op: a board whose mic driver can't drop captured audio simply
+    // doesn't get the self-talk protection, rather than crashing on a NULL.
+    if (s_mic->flush) s_mic->flush();
+#endif
+}
 int audio_spk_write(const int16_t *pcm, int n) {
 #if CONFIG_AA_SKIP_AUDIO_INIT
     (void)pcm;
