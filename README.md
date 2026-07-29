@@ -95,7 +95,7 @@ editing global pin defaults.
 > device gets its own token through the server pairing flow instead of a shared
 > secret. On boot it resolves a token in this order: `AA_DEVICE_TOKEN` override
 > → token stored in NVS → **run pairing**. Pairing calls
-> `POST /v1/devices/pair/init` (serial = eFuse MAC), shows a 6-digit code on the
+> `POST /v1/devices/pair/init` (serial = eFuse MAC), shows an 8-digit code on the
 > display (and logs it), polls `GET /v1/devices/pair/status` every 3s until a
 > logged-in user claims the code in the web Devices screen, then persists the
 > per-device token to NVS and connects with `?device_token=` on

@@ -59,7 +59,7 @@ static int http_call(const char *url, const char *method, const char *body,
 
 int aa_run_pairing(const char *base_url, const char *serial,
                    aa_show_code_fn show, char *token_out, int token_cap) {
-    char url[256], body[96], resp[512], code[8], poll_token[128];
+    char url[256], body[96], resp[512], code[AA_PAIR_CODE_MAX], poll_token[128];
     for (;;) {
         snprintf(url, sizeof url, "%s/v1/devices/pair/init", base_url);
         snprintf(body, sizeof body, "{\"serial\":\"%s\"}", serial);

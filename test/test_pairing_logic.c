@@ -39,10 +39,26 @@ static void test_parse_status(void) {
     CHECK(strcmp(tok, "TOK123") == 0);
 }
 
+// Regression guard for the 6->8 digit code widening on the server
+// (api_gateway app/services/auth/pairing.py, `_CODE_DIGITS`). The buffer
+// aa_run_pairing() parses the code into used to be a bare `char code[8]`,
+// which cannot hold 8 digits + NUL: extract_str() stops at cap-1 chars, sees
+// a digit where the closing quote should be, and returns -1 -- so pair/init
+// "parse failed" forever and the device never displays a code at all. Keep
+// this headroom check ahead of the server's digit count.
+#define AA_SERVER_CODE_DIGITS 8
+static void test_code_buffer_fits_server_code(void) {
+    CHECK(AA_PAIR_CODE_MAX >= AA_SERVER_CODE_DIGITS + 1);
+    // The buffer must also survive a plausible future widening without
+    // another silent field-failure like this one.
+    CHECK(AA_PAIR_CODE_MAX >= 12);
+}
+
 int main(void) {
     test_format_serial();
     test_classify();
     test_parse_status();
+    test_code_buffer_fits_server_code();
     if (failures) { printf("%d FAILURES\n", failures); return 1; }
     printf("OK\n");
     return 0;
