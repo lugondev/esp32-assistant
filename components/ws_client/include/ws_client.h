@@ -27,6 +27,11 @@ esp_err_t ws_client_start(const char *host, int port, bool secure,
                           ws_event_cb_t on_event, ws_audio_cb_t on_audio);
 int  ws_client_send_audio(const uint8_t *opus, int len);  // raw opus uplink
 int  ws_client_send_abort(const char *reason);
+// End the current conversation and start a fresh one WITHOUT dropping the
+// socket. Needed because this device never disconnects on its own while
+// awake: without it, everything it ever says accumulates into one
+// server-side conversation (see docs/api.md, `new_session`).
+int  ws_client_send_new_session(void);
 // Send a pre-built JSON-RPC response object as an mcp frame:
 // {"type":"mcp","payload":<json_payload>}. json_payload must already be a
 // complete, valid JSON value (mcp_tools_dispatch's output).

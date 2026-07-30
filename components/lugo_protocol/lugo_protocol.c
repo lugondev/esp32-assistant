@@ -173,6 +173,14 @@ int lugo_build_abort(char *buf, int buflen, const char *reason) {
     return n;
 }
 
+int lugo_build_new_session(char *buf, int buflen) {
+    // No session_id: the gateway mints the new one. Sending an id here would be
+    // a resume request, which is the opposite of what this asks for.
+    int n = snprintf(buf, buflen, "{\"type\":\"new_session\"}");
+    if (n < 0 || n >= buflen) return -1;
+    return n;
+}
+
 int lugo_build_text(char *buf, int buflen, const char *text) {
     const char *prefix = "{\"type\":\"text\",\"text\":\"";
     const char *suffix = "\"}";

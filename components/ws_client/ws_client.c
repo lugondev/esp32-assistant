@@ -205,6 +205,14 @@ int ws_client_send_abort(const char *reason) {
     return esp_websocket_client_send_text(s_client, buf, n, portMAX_DELAY);
 }
 
+int ws_client_send_new_session(void) {
+    if (!s_connected) return -1;
+    char buf[48];
+    int n = lugo_build_new_session(buf, sizeof buf);
+    if (n < 0) return -1;
+    return esp_websocket_client_send_text(s_client, buf, n, portMAX_DELAY);
+}
+
 int ws_client_send_mcp(const char *json_payload) {
     if (!s_connected) return -1;
     static char buf[MCP_FRAME_BUF_SIZE];

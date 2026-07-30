@@ -654,6 +654,16 @@ static void go_idle(void) {
     send_idle_status("Idle");
 }
 
+// Voice-driven "let's start over": ask the gateway to end this conversation and
+// open a fresh one on the SAME socket (docs/api.md, `new_session`). Reconnecting
+// instead would work too, but costs a full handshake plus the engine-warm wait,
+// and — because the gateway re-resolves the profile on connect — would drop the
+// reply the user is mid-way through hearing. Registered via
+// mcp_tools_set_new_session_hook below so the self.session.new tool drives it.
+static void start_new_conversation(void) {
+    ws_client_send_new_session();
+}
+
 // Common "Volume NN%" overlay + auto-revert arm. Shared by the Vol +/-
 // buttons and the MCP self.audio.set_volume tool (registered via
 // mcp_tools_set_volume_hook below) so a voice-driven volume change gets the
@@ -1232,6 +1242,7 @@ void app_main(void) {
     // need s_status_q + s_volume_revert_timer, both created above).
     mcp_tools_set_idle_hook(go_idle);
     mcp_tools_set_volume_hook(show_volume_overlay);
+    mcp_tools_set_new_session_hook(start_new_conversation);
     buttons_start(on_button);  // Wake toggles s_active; Vol +/- adjust volume
     // 3072 -> 6144: this task now also runs do_repair()'s blocking call chain
     // (aa_run_pairing's esp_http_client GET/POST + JSON parsing, possibly over

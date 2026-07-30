@@ -89,6 +89,17 @@ static void test_build_wakeup_and_controls(void) {
     CHECK(lugo_build_abort(buf, 4, "user") == -1); // overflow
 }
 
+static void test_build_new_session(void) {
+    char buf[64];
+    int n = lugo_build_new_session(buf, sizeof buf);
+    CHECK(n > 0);
+    CHECK(strcmp(buf, "{\"type\":\"new_session\"}") == 0);
+    // Deliberately carries no session_id: an id here would read as a RESUME
+    // request on the gateway, the exact opposite of starting fresh.
+    CHECK(strstr(buf, "session_id") == NULL);
+    CHECK(lugo_build_new_session(buf, 8) == -1);  // overflow fails closed
+}
+
 static void test_wakeup_advertises_mcp_feature(void) {
     char buf[256];
     int n = lugo_build_wakeup(buf, sizeof buf, "dev", 16000, 24000, 60);
@@ -135,6 +146,7 @@ int main(void) {
     test_parse_stt_goodbye_error();
     test_parse_not_object();
     test_build_wakeup_and_controls();
+    test_build_new_session();
     test_wakeup_advertises_mcp_feature();
     test_mcp_payload_pointer();
     test_json_get_bool();

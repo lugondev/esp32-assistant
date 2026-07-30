@@ -59,4 +59,7 @@ int lugo_json_get_bool(const char *json, const char *key, int default_val);
 int lugo_build_wakeup(char *buf, int buflen, const char *profile,
                       int in_sr, int out_sr, int frame_ms);
 int lugo_build_abort(char *buf, int buflen, const char *reason);
+// Ask the gateway to end this conversation and start a fresh one on the same
+// socket. Answered with a `session_new` event.
+int lugo_build_new_session(char *buf, int buflen);
 int lugo_build_text(char *buf, int buflen, const char *text);

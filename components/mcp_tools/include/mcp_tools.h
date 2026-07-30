@@ -29,3 +29,6 @@ int mcp_tools_dispatch(const char *mcp_payload, char *out_buf, int out_cap);
 // on-screen feedback instead of only answering the LLM.
 void mcp_tools_set_idle_hook(void (*cb)(void));
 void mcp_tools_set_volume_hook(void (*cb)(int volume));
+// session_tools.c: sends the `new_session` frame (ws_client), which mcp_tools
+// cannot call directly for the same circular-dependency reason as above.
+void mcp_tools_set_new_session_hook(void (*cb)(void));
