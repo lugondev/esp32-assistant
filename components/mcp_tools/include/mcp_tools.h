@@ -1,5 +1,7 @@
 // esp32-assistant/components/mcp_tools/include/mcp_tools.h
 #pragma once
+#include <stdbool.h>
+
 #include "mcp_server.h"
 
 // Define a hardware tool and auto-register it into the linker "mcp_tool"
@@ -29,6 +31,9 @@ int mcp_tools_dispatch(const char *mcp_payload, char *out_buf, int out_cap);
 // on-screen feedback instead of only answering the LLM.
 void mcp_tools_set_idle_hook(void (*cb)(void));
 void mcp_tools_set_volume_hook(void (*cb)(int volume));
-// session_tools.c: sends the `new_session` frame (ws_client), which mcp_tools
-// cannot call directly for the same circular-dependency reason as above.
-void mcp_tools_set_new_session_hook(void (*cb)(void));
+
+// self.session.new does NOT send its frame from inside the tool function: the
+// caller drains this flag AFTER writing the tool result, so `new_session`
+// reaches the gateway behind the result the model is still waiting for. Returns
+// true once per request and clears it.
+bool mcp_tools_take_new_session_request(void);

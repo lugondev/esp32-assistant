@@ -658,8 +658,13 @@ static void go_idle(void) {
 // open a fresh one on the SAME socket (docs/api.md, `new_session`). Reconnecting
 // instead would work too, but costs a full handshake plus the engine-warm wait,
 // and — because the gateway re-resolves the profile on connect — would drop the
-// reply the user is mid-way through hearing. Registered via
-// mcp_tools_set_new_session_hook below so the self.session.new tool drives it.
+// reply the user is mid-way through hearing.
+//
+// Called from the LUGO_EV_MCP handler once the self.session.new tool result has
+// already been written to the socket (mcp_tools_take_new_session_request), never
+// from inside the tool function: the request has to arrive BEHIND the result the
+// model is waiting on, or the gateway sees the rotation first and the confirming
+// reply never happens.
 static void start_new_conversation(void) {
     ws_client_send_new_session();
 }
@@ -894,6 +899,8 @@ static void on_event(const lugo_event_t *ev) {
             static char resp[MCP_FRAME_BUF_SIZE];
             int n = mcp_tools_dispatch(ev->mcp_payload, resp, sizeof resp);
             if (n > 0) ws_client_send_mcp(resp);
+            // AFTER the result, never before: see start_new_conversation.
+            if (mcp_tools_take_new_session_request()) start_new_conversation();
         }
         break;
     }
@@ -1242,7 +1249,8 @@ void app_main(void) {
     // need s_status_q + s_volume_revert_timer, both created above).
     mcp_tools_set_idle_hook(go_idle);
     mcp_tools_set_volume_hook(show_volume_overlay);
-    mcp_tools_set_new_session_hook(start_new_conversation);
+    // No hook for self.session.new: its frame is deliberately sent from the
+    // LUGO_EV_MCP handler after the tool result, not from the tool itself.
     buttons_start(on_button);  // Wake toggles s_active; Vol +/- adjust volume
     // 3072 -> 6144: this task now also runs do_repair()'s blocking call chain
     // (aa_run_pairing's esp_http_client GET/POST + JSON parsing, possibly over

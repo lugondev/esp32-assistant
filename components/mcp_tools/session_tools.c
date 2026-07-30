@@ -1,17 +1,24 @@
 // esp32-assistant/components/mcp_tools/session_tools.c
 #include "mcp_tools.h"
 
-// Set by main.c at startup (mcp_tools_set_new_session_hook) so the tool sends
-// the real `new_session` frame instead of only answering the LLM. NULL until
-// main.c registers it, and in host tests — same dependency-inversion pattern as
-// the idle and volume hooks (mcp_tools must not depend on ws_client/main).
-static void (*s_new_session_hook)(void) = NULL;
+// Requested by the tool, sent by the caller: main.c drains this AFTER writing
+// the tool result to the socket. A hook that sent the frame from here would send
+// it FIRST, and `new_session` rotates the conversation server-side -- it would
+// land while the model is still waiting for this very tool's result, so the
+// result reaches a turn the gateway has already moved on from and the assistant
+// never gets to confirm. rpi-assistant defers it the same way, for the same
+// reason (a2a_client/service.py, `_new_session_requested`).
+static bool s_new_session_requested = false;
 
-void mcp_tools_set_new_session_hook(void (*cb)(void)) { s_new_session_hook = cb; }
+bool mcp_tools_take_new_session_request(void) {
+    bool requested = s_new_session_requested;
+    s_new_session_requested = false;
+    return requested;
+}
 
 static mcp_result_t new_session_fn(const char *args) {
     (void)args;
-    if (s_new_session_hook) s_new_session_hook();
+    s_new_session_requested = true;
     return mcp_ok_text("starting a new conversation");
 }
 
