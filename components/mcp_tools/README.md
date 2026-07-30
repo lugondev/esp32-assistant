@@ -40,7 +40,18 @@ Set it when the action is destructive, hard to reverse, or safety-relevant —
 `self.device.shutdown` (powers off), `self.gpio.set` (could physically drive
 something unexpected). Do **not** set it for read-only or easily-reversible
 actions — `self.get_device_status`, `self.audio.set_volume`,
-`self.screen.set_backlight`, `self.device.idle` ("go rest" is not destructive).
+`self.screen.set_backlight`, `self.device.idle` ("go rest" is not destructive),
+`self.session.new` (the conversation it ends is still kept server-side — it
+appears in History and its memories are extracted — so nothing is lost).
+
+## Watch the frame budget
+
+Every tool's name + description + schema goes into one `tools/list` response
+that must fit `MCP_FRAME_BUF_SIZE` (`components/ws_client/include/ws_client.h`).
+Overrunning it fails **closed and silently**: the device advertises no tools at
+all and nothing in the log says why. `make -C test test` runs
+`tools/check_mcp_frame_size.py`, which fails the build below 256 bytes of
+headroom — heed it rather than trimming a description that earns its length.
 
 When `requires_confirm` is true, the **gateway** (not this firmware) injects a
 `confirm` boolean into the tool's schema and blocks the first call until the

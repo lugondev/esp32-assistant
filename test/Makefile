@@ -55,6 +55,8 @@ test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_
 	./test_statusbar
 	./test_battery_logic
 	./test_pairing_logic
+	@echo '--- mcp frame size ---'
+	python3 ../tools/check_mcp_frame_size.py
 
 test_provisioning_ssid: test_provisioning_ssid.c $(SRC_PROVISIONING_SSID)
 	$(CC) $(CFLAGS) -o $@ $^

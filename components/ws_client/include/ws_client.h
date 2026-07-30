@@ -11,10 +11,17 @@ typedef void (*ws_audio_cb_t)(const uint8_t *opus, int len);
 // response end-to-end: main.c's `resp` (raw dispatch output) and ws_client.c's
 // `buf` (the {"type":"mcp","payload":...} wrapper built from `resp`). Both
 // must stay in lock-step, or the smaller one silently drops the frame (dispatch
-// / snprintf both fail closed rather than overflow). Measured tools/list
-// response for the real 7-tool build is ~1416 bytes; 2048 leaves headroom for
-// future tools without another emergency resize.
-#define MCP_FRAME_BUF_SIZE 2048
+// / snprintf both fail closed rather than overflow).
+//
+// Measured tools/list responses: 7 tools ~1416 bytes; 8 tools (adding
+// self.session.new) 1850 bytes, 1876 once ws_client wraps it. That left only
+// 172 bytes under the old 2048 cap -- one more tool, or one longer description,
+// and dispatch would fail closed and the device would advertise NO tools at all,
+// with nothing in the logs pointing at the size. 3072 restores real headroom.
+//
+// This grows two static buffers, so the cost is ~2 KB of SRAM, not flash. If you
+// add a tool, re-measure rather than assuming: the failure mode is silent.
+#define MCP_FRAME_BUF_SIZE 3072
 
 // Connect to WS /v1/lugo/stream and, on connect, send the Lugo `wakeup`
 // handshake declaring `profile` + audio params. Downlink audio arrives v3-framed
