@@ -28,3 +28,8 @@ CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=12
 CONFIG_LWIP_MAX_SOCKETS=6
 CONFIG_LWIP_TCP_SND_BUF_DEFAULT=2880
 CONFIG_LWIP_TCP_WND_DEFAULT=2880
+
+# Console on native USB-Serial-JTAG (the C3 default, and the config that ran the
+# app on the flash port without a port swap). Reverted from a UART-console
+# experiment that correlated with the flash port latching download mode.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
