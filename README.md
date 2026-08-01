@@ -85,16 +85,14 @@ selected **board** (see **Boards & wiring**), not from this table.
 | Gateway port | `AA_SERVER_PORT` | `8000` | |
 | Use wss:// (TLS) | `AA_SERVER_SECURE` | off | Enable for production |
 | Chatllm profile (optional) | `AA_PROFILE` | *(empty)* | Named profile from `POST /v1/profiles` — bundles STT engine + language, TTS voice, LLM model/system prompt, MCP tools, memory. Empty → server `.env` defaults |
-| Device token override (optional) | `AA_DEVICE_TOKEN` | *(empty)* | Dev/legacy override. If set, it is used verbatim and **pairing is skipped**. Leave empty for normal per-device pairing (see note below) |
 
 Mic/speaker/display/button pins are defined per board in
 `components/boards/<name>/board_def.c` — **pick the board that matches your wiring** rather than
 editing global pin defaults.
 
-> **Per-device pairing (the normal path).** With `AA_DEVICE_TOKEN` empty, the
-> device gets its own token through the server pairing flow instead of a shared
-> secret. On boot it resolves a token in this order: `AA_DEVICE_TOKEN` override
-> → token stored in NVS → **run pairing**. Pairing calls
+> **Per-device pairing (the only path).** The device gets its own token through
+> the server pairing flow rather than a shared secret. On boot it resolves a
+> token in this order: token stored in NVS → **run pairing**. Pairing calls
 > `POST /v1/devices/pair/init` (serial = eFuse MAC), shows an 8-digit code on the
 > display (and logs it), polls `GET /v1/devices/pair/status` every 3s until a
 > logged-in user claims the code in the web Devices screen, then persists the
@@ -108,11 +106,11 @@ editing global pin defaults.
 > re-enters pairing (showing a fresh code). Ordinary network drops, ping
 > timeouts, and idle `goodbye`s keep the token and just reconnect.
 >
-> **`AA_DEVICE_TOKEN` override** stays as a dev/legacy escape hatch: set it to
-> connect with a fixed token and skip pairing entirely. A revoked override
-> cannot be re-paired away (it is static config) — the device just retries with
-> backoff, so fix the config. The gateway also still accepts the legacy shared
-> `DEVICE_AUTH_TOKEN` env var as a fallback.
+> There is no build-time token override any more. `AA_DEVICE_TOKEN` used to sit
+> in front of both steps, and because it lived in the image rather than in NVS a
+> revoked override could never be re-paired away — both revocation paths needed
+> a special case to skip themselves whenever it was set. The gateway still
+> accepts the legacy shared `DEVICE_AUTH_TOKEN` env var as a fallback.
 
 ---
 

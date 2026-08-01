@@ -57,9 +57,9 @@ static const char *TAG = "app";
 // app_main's local through every caller.
 static wifi_cfg_t s_cfg;
 
-// Resolved by resolve_device_token(): CONFIG_AA_DEVICE_TOKEN override, else
-// the NVS-stored per-device token, else whatever aa_run_pairing() just
-// claimed (which also persists it to NVS itself).
+// Resolved by resolve_device_token(): the NVS-stored per-device token, else
+// whatever aa_run_pairing() just claimed (which also persists it to NVS
+// itself).
 static char s_device_token[128];
 
 // GOODBYE reason text (e.g. "account_disabled"), captured by on_event() for
@@ -585,21 +585,19 @@ static void show_pair_code(const char *code) {
     xQueueSend(s_status_q, &m, 0);
 }
 
-// Resolves the token ws_client_start() connects with, in priority order:
-//   1) CONFIG_AA_DEVICE_TOKEN -- a static dev/legacy override. Used verbatim;
-//      pairing is skipped entirely. IMPORTANT: this value can never be wiped
-//      or re-paired by the revoke handling below (there is nothing in NVS to
-//      clear, and re-pairing would mint a per-device token the override
-//      would just keep shadowing) -- see the override guards in on_event's
-//      GOODBYE case and idle_watchdog_task.
-//   2) a per-device token already claimed and stored in NVS.
-//   3) aa_run_pairing(): blocks (HTTP poll loop) until an operator claims the
+// Resolves the token ws_client_start() connects with:
+//   1) a per-device token already claimed and stored in NVS.
+//   2) aa_run_pairing(): blocks (HTTP poll loop) until an operator claims the
 //      code shown via show_pair_code(); persists the token to NVS itself.
+//
+// There is no build-time override any more. CONFIG_AA_DEVICE_TOKEN used to sit
+// in front of both of these, and its whole existence was a special case:
+// because it lived in the image rather than in NVS there was nothing to clear,
+// so a revoked override could never be re-paired away and BOTH revoke paths
+// (on_event's GOODBYE case and idle_watchdog_task) needed a guard to skip
+// themselves whenever it was set. Pairing is the mechanism now, so the option
+// and its two guards are gone.
 static const char *resolve_device_token(void) {
-    if (CONFIG_AA_DEVICE_TOKEN[0] != '\0') {
-        snprintf(s_device_token, sizeof s_device_token, "%s", CONFIG_AA_DEVICE_TOKEN);
-        return s_device_token;
-    }
     if (aa_load_device_token(s_device_token, sizeof s_device_token) > 0)
         return s_device_token;
 
@@ -864,12 +862,10 @@ static void on_event(const lugo_event_t *ev) {
         dl_flush();   // flush any buffered downlink audio
         audio_spk_reset();
         opus_codec_reset();
-        // Revoke check: a static CONFIG_AA_DEVICE_TOKEN override can never be
-        // re-paired away (nothing in NVS to clear -- see resolve_device_token),
-        // so skip classification entirely and just fall through to the normal
-        // idle-sleep-until-wake behavior above, same as any other goodbye.
-        if (CONFIG_AA_DEVICE_TOKEN[0] == '\0' &&
-            aa_classify_disconnect(ws_client_last_handshake_status(),
+        // Revoke check (reason=account_disabled -> wipe the NVS token and
+        // re-pair). Every token is a per-device NVS one now, so this no longer
+        // needs the "unless it's a build-time override" escape hatch.
+        if (aa_classify_disconnect(ws_client_last_handshake_status(),
                                     s_last_goodbye_reason) == AA_DISCONNECT_REPAIR) {
             // Defer the actual clear/re-pair/reboot to idle_watchdog_task:
             // this callback runs on the ws client's own task and must not
@@ -1108,11 +1104,8 @@ static void idle_watchdog_task(void *arg) {
         // LUGO_EV_GOODBYE is ever delivered for this case -- the session
         // never reached the Lugo protocol layer at all, so this periodic
         // check is the only place that can notice it. Only while the user is
-        // actively trying to connect (s_active) and there's no static
-        // override token (which cannot be re-paired away and, per the
-        // override guard, should just keep retrying via ws_client's own
-        // throttled reconnect instead).
-        if (s_active && !ws_client_connected() && CONFIG_AA_DEVICE_TOKEN[0] == '\0') {
+        // actively trying to connect (s_active).
+        if (s_active && !ws_client_connected()) {
             int status = ws_client_last_handshake_status();
             if (aa_classify_disconnect(status, "") == AA_DISCONNECT_REPAIR) {
                 do_repair("handshake rejected");   // does not return (esp_restart)
@@ -1273,9 +1266,9 @@ void app_main(void) {
     // STT/TTS/language all come from the chatllm profile server-side; the device
     // configures only which profile to connect to (CONFIG_AA_PROFILE). Downlink
     // is decoded at 16 kHz to match the device opus decoder.
-    // resolve_device_token(): CONFIG_AA_DEVICE_TOKEN override -> stored NVS
-    // token -> pair now (blocks until claimed; status_task is already running
-    // by this point so show_pair_code's queue-based update is safe).
+    // resolve_device_token(): stored NVS token -> pair now (blocks until
+    // claimed; status_task is already running by this point so
+    // show_pair_code's queue-based update is safe).
     const char *device_token = resolve_device_token();
     s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
     ESP_ERROR_CHECK(ws_client_start(

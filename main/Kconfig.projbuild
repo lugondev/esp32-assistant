@@ -13,16 +13,24 @@ config AA_SERVER_SECURE
     default n
 
 config AA_WIFI_SSID
-    string "Fallback WiFi SSID (used only until provisioning saves one to NVS)"
+    string "SIMULATOR ONLY: hardcoded WiFi SSID (leave empty on hardware)"
     default ""
     help
-        Real devices always provision over the captive portal, so this stays
-        empty for hardware builds. Set to "Wokwi-GUEST" (Wokwi's fixed virtual
-        AP name) only in a Wokwi-specific sdkconfig, so STA connect succeeds
-        in simulation without going through the (un-simulatable) AP-join flow.
+        Leave this empty. Real devices get their credentials from the setup
+        portal (SoftAP "Lugo-XXXX" -> pick a network -> save), which writes
+        them to NVS; an empty SSID here just means app_main goes straight to
+        that portal on first boot instead of burning 15s on a connect attempt
+        that cannot succeed.
+
+        The one legitimate use is sdkconfig.wokwi, which sets "Wokwi-GUEST"
+        (the simulator's fixed virtual AP) because the phone-joins-the-AP
+        provisioning flow cannot be simulated. Setting it for a hardware build
+        bakes a credential into the firmware image and shadows whatever the
+        portal saved on first boot only -- see wifi_cfg_load, where NVS still
+        wins once anything is stored.
 
 config AA_WIFI_PASS
-    string "Fallback WiFi password (paired with AA_WIFI_SSID)"
+    string "SIMULATOR ONLY: hardcoded WiFi password (paired with AA_WIFI_SSID)"
     default ""
 
 config AA_PROFILE
@@ -35,20 +43,6 @@ config AA_PROFILE
         connect (WS /v1/lugo/stream) — the device configures only which profile to
         use, not the engines. Leave empty to fall back to the server's own .env
         defaults (30s idle timeout, default engines).
-
-config AA_DEVICE_TOKEN
-    string "Device WS auth token (optional override)"
-    default ""
-    help
-        Optional override; empty for normal pairing. If set, used verbatim as
-        ?device_token=<value> on the /v1/lugo/stream WS URI and normal
-        per-device pairing (POST /v1/devices/pair/init + claim, see
-        components/pairing) is skipped entirely. This is a static dev/legacy
-        value: it is never wiped or re-paired automatically even if the
-        gateway rejects/revokes it (see resolve_device_token() in main.c) --
-        clearing an override requires a manual reflash/reconfigure. Leave
-        empty (the default) so the device pairs itself on first boot and
-        stores its own per-device token in NVS.
 
 config AA_MIC_WS
     int "INMP441 mic I2S WS/LRCK gpio"
