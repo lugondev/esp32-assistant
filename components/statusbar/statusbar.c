@@ -1,14 +1,15 @@
 #include "statusbar.h"
 #include "gfx.h"
 #include "display_font.h"
+#include "wifi_signal.h"
 #include <string.h>
 
 int statusbar_wifi_bars(bool connected, int rssi_dbm) {
-    if (!connected) return 0;
-    if (rssi_dbm >= -55) return 4;
-    if (rssi_dbm >= -65) return 3;
-    if (rssi_dbm >= -75) return 2;
-    return 1;
+    // The thresholds themselves live in wifi_signal_bars — the setup portal
+    // renders the same ladder and the two used to keep private copies of it.
+    // All this layer adds is the "not associated" case the portal has no use
+    // for (a scan result is reachable by definition).
+    return connected ? wifi_signal_bars(rssi_dbm) : 0;
 }
 
 // Below this status-bar height, the full 8x8 font doesn't leave enough

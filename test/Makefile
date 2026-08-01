@@ -3,7 +3,7 @@ CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
          -I../components/provisioning/include -I../components/wifi/include \
          -I../components/display/include -I../components/lugo_protocol/include
 SRC_PROVISIONING_SSID = ../components/provisioning/provisioning_ssid.c
-SRC_PROVISIONING_FORM = ../components/provisioning/provisioning_form.c
+SRC_PROVISIONING_FORM = ../components/provisioning/provisioning_form.c ../components/wifi/wifi_signal.c
 SRC_DISPLAY_FONT = ../components/display/display_font.c
 SRC_LUGO_PROTOCOL = ../components/lugo_protocol/lugo_protocol.c
 
@@ -30,9 +30,10 @@ ROBOT_EYES_CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
 SRC_ROBOT_EYES = ../components/robot_eyes/robot_eyes.c ../components/gfx/gfx.c ../components/display/display_font.c
 
 STATUSBAR_CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
+                    -I../components/wifi/include \
                     -I../components/statusbar/include -I../components/gfx/include \
                     -I../components/display/include
-SRC_STATUSBAR = ../components/statusbar/statusbar.c ../components/gfx/gfx.c ../components/display/display_font.c
+SRC_STATUSBAR = ../components/statusbar/statusbar.c ../components/gfx/gfx.c ../components/display/display_font.c ../components/wifi/wifi_signal.c
 
 BATTERY_CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
                  -I../components/battery/include -I../components/board/include -Ishims

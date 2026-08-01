@@ -1,4 +1,5 @@
 #include "provisioning_form.h"
+#include "wifi_signal.h"
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -161,16 +162,6 @@ static void s_esc(sink_t *s, const char *str) {
     }
 }
 
-int provisioning_signal_bars(int rssi_dbm) {
-    // Same buckets as statusbar_wifi_bars, minus its "0 = disconnected" case:
-    // anything in a scan result is by definition reachable, so the weakest
-    // bucket is 1 bar rather than none.
-    if (rssi_dbm >= -55) return 4;
-    if (rssi_dbm >= -65) return 3;
-    if (rssi_dbm >= -75) return 2;
-    return 1;
-}
-
 int provisioning_sort_networks(prov_network_t *nets, int n) {
     if (!nets || n <= 0) return 0;
 
@@ -316,7 +307,7 @@ int provisioning_render_form(char *buf, size_t buflen, const wifi_cfg_t *cfg,
             s_put(&s, "</span><span class=meta>");
             if (nets[i].secure) s_put(&s, "<svg class=lk><use href=#lk /></svg>");
             s_putf(&s, "<span class=\"bars b%d\"><i></i><i></i><i></i><i></i></span>",
-                   provisioning_signal_bars(nets[i].rssi));
+                   wifi_signal_bars(nets[i].rssi));
             s_put(&s, "</span></button></li>");
         }
         s_put(&s, "</ul>");

@@ -29,10 +29,10 @@ typedef struct {
 // so the headroom costs nothing at rest.
 #define PROV_PAGE_BUF 16384
 
-// Signal strength bucketed to 1..4 bars (0 is never returned — a network that
-// showed up in a scan is reachable by definition). Same thresholds as the
-// device's own status bar, so the phone and the panel agree.
-int provisioning_signal_bars(int rssi_dbm);
+// Signal strength for the scan list comes from wifi_signal_bars()
+// (components/wifi/include/wifi_signal.h) — the same ladder the device's own
+// status bar reads, so the phone and the panel agree. This header used to
+// declare a provisioning_signal_bars() that was a second copy of it.
 
 // De-duplicates by SSID (the same network usually answers on both bands, and
 // mesh setups repeat it per node — the strongest sighting of each wins) and
