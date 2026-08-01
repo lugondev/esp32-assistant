@@ -94,5 +94,21 @@ typedef struct board {
     const void          *display_cfg;
     const void          *buttons_cfg;
     const void          *battery_cfg;
+    // GPIOs this board has already wired to something, so a generic pin-poking
+    // caller (today: mcp_tools' self.gpio.set, driven by the LLM) can refuse
+    // them instead of, say, reconfiguring the display's SCLK as an output and
+    // killing the panel mid-conversation.
+    //
+    // Only pins the *board* knows about need listing — display, buttons and
+    // any other bare-GPIO peripheral. Pins claimed by an IDF driver that
+    // reserves them (I2S mic/speaker, SPI flash, PSRAM) are already covered at
+    // runtime by esp_gpio_is_reserved(), so listing them here would just be a
+    // second copy to keep in sync. Declare pins via the same named constants
+    // the cfg structs use, so the two can't drift.
+    //
+    // NULL/0 means "this board declares nothing", which is honest but leaves
+    // its peripherals unprotected — prefer an explicit list.
+    const int           *reserved_pins;
+    int                  n_reserved_pins;
     bool               (*match)(void); // true if firmware is running on this board
 } board_t;

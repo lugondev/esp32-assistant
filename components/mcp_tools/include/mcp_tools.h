@@ -31,6 +31,11 @@ int mcp_tools_dispatch(const char *mcp_payload, char *out_buf, int out_cap);
 // on-screen feedback instead of only answering the LLM.
 void mcp_tools_set_idle_hook(void (*cb)(void));
 void mcp_tools_set_volume_hook(void (*cb)(int volume));
+// self.screen.show_text MUST go through this one: tool functions run on the ws
+// client's task, and only status_task may touch the panel (see main.c's
+// isolation note, and the longer explanation in display_tools.c). line2 is
+// NULL for a single-line message.
+void mcp_tools_set_show_text_hook(void (*cb)(const char *line1, const char *line2));
 
 // self.session.new does NOT send its frame from inside the tool function: the
 // caller drains this flag AFTER writing the tool result, so `new_session`

@@ -573,6 +573,25 @@ static void send_listening_status(void) {
     xQueueSend(s_status_q, &m, 0);
 }
 
+// mcp_tools' self.screen.show_text callback (registered via
+// mcp_tools_set_show_text_hook below). Same reason show_pair_code below is
+// queued rather than drawn directly, but load-bearing here: the tool function
+// runs inside on_event(), on the ws client's task, and status_task is already
+// driving the panel ~20x/s for the idle eyes -- two tasks issuing esp_lcd
+// transactions against one panel handle is not safe. Queueing hands the text
+// to the one task allowed to draw.
+//
+// show_idle_eyes stays false so this renders as the plain two-line text
+// screen, i.e. exactly what the tool's description promises; the next status
+// message (TTS_START, a button, ...) replaces it as usual.
+static void show_mcp_text(const char *line1, const char *line2) {
+    status_msg_t m = { .play_voice = false, .has_line2 = line2 != NULL,
+                        .show_idle_eyes = false };
+    strncpy(m.line1, line1, sizeof(m.line1) - 1);
+    if (line2) strncpy(m.line2, line2, sizeof(m.line2) - 1);
+    xQueueSend(s_status_q, &m, 0);
+}
+
 // aa_run_pairing's show callback. Routed through s_status_q rather than a
 // direct display_show() -- resolve_device_token() can run well after
 // status_task has started (both at boot, right before ws_client_start, and
@@ -1253,6 +1272,10 @@ void app_main(void) {
     // need s_status_q + s_volume_revert_timer, both created above).
     mcp_tools_set_idle_hook(go_idle);
     mcp_tools_set_volume_hook(show_volume_overlay);
+    // Required, not optional: without it self.screen.show_text reports "screen
+    // not available" rather than drawing the panel from the ws task (see
+    // show_mcp_text / display_tools.c).
+    mcp_tools_set_show_text_hook(show_mcp_text);
     // No hook for self.session.new: its frame is deliberately sent from the
     // LUGO_EV_MCP handler after the tool result, not from the tool itself.
     buttons_start(on_button);  // Wake toggles s_active; Vol +/- adjust volume

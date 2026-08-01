@@ -22,11 +22,37 @@ static const i2s_mic_cfg_t mic_cfg = {
 static const i2s_speaker_cfg_t spk_cfg = {
     .port = 1, .bclk = CONFIG_AA_SPK_BCLK, .lrc = CONFIG_AA_SPK_LRC, .din = CONFIG_AA_SPK_DIN,
 };
-static const display_ssd1306_cfg_t ssd1306_cfg = { .scl = 42, .sda = 41, .i2c_addr = 0x3C };
-static const display_st7789_cfg_t  st7789_cfg  = { .sclk = 42, .mosi = 41, .dc = 1, .rst = 2, .bl = 17 };
+// PLACEHOLDER pins (copied from lugo-s3-nx). Named so board_t.reserved_pins
+// below reuses the same constants — when the real pinout lands, changing these
+// defines updates the cfg structs AND the reserved list together. The camera
+// pins will want adding to reserved_pins too once the facade exists.
+#define PIN_DISP_CLK  42   // ssd1306 SCL / st7789 SCLK
+#define PIN_DISP_DAT  41   // ssd1306 SDA / st7789 MOSI
+#define PIN_DISP_DC    1
+#define PIN_DISP_RST   2
+#define PIN_DISP_BL   17
+#define PIN_BTN_WAKE     47
+#define PIN_BTN_VOL_UP   40
+#define PIN_BTN_VOL_DOWN 39
+
+static const display_ssd1306_cfg_t ssd1306_cfg = {
+    .scl = PIN_DISP_CLK, .sda = PIN_DISP_DAT, .i2c_addr = 0x3C,
+};
+static const display_st7789_cfg_t  st7789_cfg  = {
+    .sclk = PIN_DISP_CLK, .mosi = PIN_DISP_DAT,
+    .dc = PIN_DISP_DC, .rst = PIN_DISP_RST, .bl = PIN_DISP_BL,
+};
 static const display_auto_cfg_t    display_cfg = { .ssd1306 = &ssd1306_cfg, .st7789 = &st7789_cfg };
 static const buttons_gpio_cfg_t buttons_cfg = {
-    .wake = 47, .vol_up = 40, .vol_down = 39, .emotion = -1,
+    .wake = PIN_BTN_WAKE, .vol_up = PIN_BTN_VOL_UP,
+    .vol_down = PIN_BTN_VOL_DOWN, .emotion = -1,
+};
+
+// Display + buttons (see board_t.reserved_pins). Mic/speaker I2S pins are
+// omitted on purpose — the I2S driver reserves those itself.
+static const int reserved_pins[] = {
+    PIN_DISP_CLK, PIN_DISP_DAT, PIN_DISP_DC, PIN_DISP_RST, PIN_DISP_BL,
+    PIN_BTN_WAKE, PIN_BTN_VOL_UP, PIN_BTN_VOL_DOWN,
 };
 
 static bool match(void) { return false; }  // opt-in via CONFIG_AA_BOARD_LUGO_S3_WROOM
@@ -41,6 +67,8 @@ LUGO_BOARD_REGISTER(board_lugo_s3_wroom) {
     .speaker_cfg = &spk_cfg,
     .display_cfg = &display_cfg,
     .buttons_cfg = &buttons_cfg,
+    .reserved_pins   = reserved_pins,
+    .n_reserved_pins = (int)(sizeof(reserved_pins) / sizeof(reserved_pins[0])),
     .match       = match,
 };
 

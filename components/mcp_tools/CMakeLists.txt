@@ -6,6 +6,6 @@
 # libmcp_tools.a, and the section stays empty at runtime.
 idf_component_register(SRCS "registry.c" "audio_tools.c" "display_tools.c" "gpio_tools.c" "device_tools.c" "session_tools.c"
                        INCLUDE_DIRS "include"
-                       REQUIRES mcp_server audio display driver esp_system
+                       REQUIRES mcp_server audio display driver esp_system board esp_hw_support soc
                        LDFRAGMENTS "linker.lf"
                        WHOLE_ARCHIVE)

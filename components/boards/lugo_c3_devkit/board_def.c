@@ -21,12 +21,32 @@ static const i2s_fd_cfg_t fd_cfg = {
     .bclk = 7, .ws = 3, .spk_data = 6,          // MAX98357A: BCLK 7, LRC 3, DIN 6
     .mic_bclk = 1, .mic_ws = 2, .mic_data = 10, // INMP441: SCK 1, WS 2, SD 10
 };
-// Same pins carry I2C (SSD1306) or SPI (ST7789); ST7789 adds dc/rst/bl.
-static const display_ssd1306_cfg_t ssd1306_cfg = { .scl = 5, .sda = 4, .i2c_addr = 0x3C };
-static const display_st7789_cfg_t  st7789_cfg  = { .sclk = 5, .mosi = 4, .dc = 20, .rst = 21, .bl = -1 };
+// Same pins carry I2C (SSD1306) or SPI (ST7789); ST7789 adds dc/rst (bl is -1:
+// the panel's LED is tied to 3V3 on this wiring, no GPIO to drive).
+// Named so board_t.reserved_pins below reuses the same constants.
+#define PIN_DISP_CLK  5   // ssd1306 SCL / st7789 SCLK
+#define PIN_DISP_DAT  4   // ssd1306 SDA / st7789 MOSI
+#define PIN_DISP_DC  20
+#define PIN_DISP_RST 21
+#define PIN_BTN_WAKE  0
+
+static const display_ssd1306_cfg_t ssd1306_cfg = {
+    .scl = PIN_DISP_CLK, .sda = PIN_DISP_DAT, .i2c_addr = 0x3C,
+};
+static const display_st7789_cfg_t  st7789_cfg  = {
+    .sclk = PIN_DISP_CLK, .mosi = PIN_DISP_DAT,
+    .dc = PIN_DISP_DC, .rst = PIN_DISP_RST, .bl = -1,
+};
 static const display_auto_cfg_t    display_cfg = { .ssd1306 = &ssd1306_cfg, .st7789 = &st7789_cfg };
 static const buttons_gpio_cfg_t buttons_cfg = {
-    .wake = 0, .vol_up = -1, .vol_down = -1, .emotion = -1,
+    .wake = PIN_BTN_WAKE, .vol_up = -1, .vol_down = -1, .emotion = -1,
+};
+
+// Display + buttons (see board_t.reserved_pins). Mic/speaker I2S pins are
+// omitted on purpose — the I2S driver reserves those itself, so
+// esp_gpio_is_reserved() already covers them.
+static const int reserved_pins[] = {
+    PIN_DISP_CLK, PIN_DISP_DAT, PIN_DISP_DC, PIN_DISP_RST, PIN_BTN_WAKE,
 };
 
 static bool match(void) { return true; }  // Kconfig-forced; the active C3 board
@@ -41,6 +61,8 @@ LUGO_BOARD_REGISTER(board_lugo_c3_devkit) {
     .speaker_cfg = &fd_cfg,
     .display_cfg = &display_cfg,
     .buttons_cfg = &buttons_cfg,
+    .reserved_pins   = reserved_pins,
+    .n_reserved_pins = (int)(sizeof(reserved_pins) / sizeof(reserved_pins[0])),
     .match       = match,
 };
 
