@@ -104,11 +104,20 @@ static volatile bool s_voice_busy = false;
 // callback, read by mic_task.
 static volatile bool s_active = false;
 
-// Barge-in request: set by the button task (which must not touch audio hardware
-// from its small stack — cross-task I2S/SPI calls have crashed here before), and
-// serviced by spk_task (the owner of the I2S TX + opus decoder), which flushes
-// the jitter queue, drops the DMA, and resets the decoder. One-shot flag.
-static volatile bool s_barge_in = false;
+// "Tear the playback path down and start clean" request, serviced by spk_task
+// — the owner of the I2S TX channel and the opus decoder — which flushes the
+// jitter buffer, drops the committed DMA, and resets the decoder. One-shot flag.
+//
+// Two raisers, both of which must NOT do the work themselves:
+//   - the button task (barge-in): its stack is small and cross-task I2S/SPI
+//     calls have crashed here before.
+//   - on_event's GOODBYE case: it runs on the ws client's task, so calling
+//     audio_spk_reset() there blocks on the TX mutex behind an in-flight
+//     i2s_channel_write, and opus_codec_reset() races spk_task's concurrent
+//     opus_decode() on the same decoder — an unlocked read/write of the codec
+//     state. It used to do exactly that inline; now it just raises this flag,
+//     the same way barge-in always has.
+static volatile bool s_audio_reset_req = false;
 
 // Request that mic_task drop everything the RX DMA has already captured.
 // Serviced by mic_task itself rather than by the requester, for the same reason
@@ -362,6 +371,22 @@ static int idle_status_bar_height(void) {
 // Renders + flushes the status bar strip (WiFi bars, centered text, battery).
 // Factored out because two spots need it: every status message, and the
 // periodic idle refresh (STATUS_BAR_REFRESH_MS).
+// PSRAM first, internal RAM if the SoC has none. The C3 has no PSRAM at all,
+// so a plain MALLOC_CAP_SPIRAM request there ALWAYS returns NULL — which meant
+// every HUD buffer below failed to allocate, status_task fell back to the
+// two-line text screen forever, and the idle eyes simply never rendered on any
+// C3 board (with an ESP_LOGE on every status message to go with it). app_main's
+// queue storage already falls back exactly like this for the same reason.
+//
+// Deliberately not "internal first": on the S3 these buffers are tens of KB and
+// internal RAM is the scarce resource the audio path competes for, so PSRAM
+// stays the preferred pool wherever it exists.
+static void *hud_alloc(size_t bytes) {
+    void *p = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+    if (!p) p = heap_caps_malloc(bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    return p;
+}
+
 static void render_status_bar(uint16_t *bar_buf, int w, int bar_h, const char *line1) {
     int rssi = 0;
     bool connected = wifi_sta_get_rssi(&rssi);
@@ -424,10 +449,10 @@ static void status_task(void *arg) {
                 int scratch_h = status_bar_height();
                 int status_bar_h = idle_status_bar_height();
                 if (!s_bar_buf) {
-                    s_bar_buf = heap_caps_malloc((size_t)w * scratch_h * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+                    s_bar_buf = hud_alloc((size_t)w * scratch_h * sizeof(uint16_t));
                 }
                 if (!s_bar_buf) {
-                    ESP_LOGE(TAG, "statusbar: PSRAM alloc failed, falling back to text");
+                    ESP_LOGE(TAG, "statusbar: %ux%u alloc failed, falling back to text", (unsigned)w, (unsigned)scratch_h);
                     idle_eyes_active = false;
                     display_show(m.line1, m.has_line2 ? m.line2 : NULL);
                 } else {
@@ -473,9 +498,9 @@ static void status_task(void *arg) {
             int band_y, band_h;
             robot_eyes_dirty_band(eyes_h, &band_y, &band_h);
             if (!s_eyes_buf) {
-                s_eyes_buf = heap_caps_malloc((size_t)w * band_h * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+                s_eyes_buf = hud_alloc((size_t)w * band_h * sizeof(uint16_t));
                 if (!s_eyes_buf) {
-                    ESP_LOGE(TAG, "robot_eyes: PSRAM alloc failed, falling back to text");
+                    ESP_LOGE(TAG, "robot_eyes: %ux%u alloc failed, falling back to text", (unsigned)w, (unsigned)band_h);
                     idle_eyes_active = false;
                     display_show(m.line1, m.has_line2 ? m.line2 : NULL);
                     continue;
@@ -527,7 +552,7 @@ static void status_task(void *arg) {
                 robot_eyes_decor_band(eyes_h, decor, &decor_y, &decor_h);
                 if (!s_decor_buf || s_decor_buf_h < decor_h) {
                     if (s_decor_buf) heap_caps_free(s_decor_buf);
-                    s_decor_buf = heap_caps_malloc((size_t)w * decor_h * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+                    s_decor_buf = hud_alloc((size_t)w * decor_h * sizeof(uint16_t));
                     s_decor_buf_h = s_decor_buf ? decor_h : 0;
                 }
                 if (s_decor_buf) {
@@ -734,7 +759,7 @@ static void on_button(button_id_t id) {
             s_turn_ending = false;
             s_state = APP_LISTENING;
             s_active = true;
-            s_barge_in = true;   // spk_task flushes the queue + resets I2S/opus
+            s_audio_reset_req = true;   // spk_task flushes the queue + resets I2S/opus
             // Start dropping captured audio from the press itself: the speaker
             // is still playing the bot until spk_task services s_barge_in, and
             // the mic is already open (state is LISTENING as of the line above).
@@ -878,9 +903,12 @@ static void on_event(const lugo_event_t *ev) {
         s_state = APP_LISTENING;
         ws_client_set_reconnect(false);
         wifi_sta_set_perf_mode(false);
-        dl_flush();   // flush any buffered downlink audio
-        audio_spk_reset();
-        opus_codec_reset();
+        // Ask spk_task to flush the downlink buffer + reset I2S/opus, rather
+        // than doing it here: this callback runs on the ws client's task and
+        // spk_task may be inside opus_decode()/i2s_channel_write() right now
+        // (see s_audio_reset_req). Doing it inline raced the decoder state and
+        // blocked this callback on the speaker's TX mutex.
+        s_audio_reset_req = true;
         // Revoke check (reason=account_disabled -> wipe the NVS token and
         // re-pair). Every token is a per-device NVS one now, so this no longer
         // needs the "unless it's a build-time override" escape hatch.
@@ -1030,12 +1058,13 @@ static void spk_task(void *arg) {
     // for responsiveness; anything above 0 means the depth is already marginal.
     int underruns = 0;
     for (;;) {
-        if (s_barge_in) {
-            // Serviced here (not in the button task) because this task owns the
+        if (s_audio_reset_req) {
+            // Serviced here (not in the requester) because this task owns the
             // I2S TX channel + opus decoder. Flush the jitter queue, drop the
             // committed DMA, and reset the decoder so the next reply is clean.
-            // The button task already set LISTENING + showed "Listening".
-            s_barge_in = false;
+            // Raised by barge-in (the button task already set LISTENING +
+            // showed "Listening") and by the goodbye handler.
+            s_audio_reset_req = false;
             dl_flush();
             audio_spk_reset();
             opus_codec_reset();

@@ -1,5 +1,6 @@
 #include "ws_client.h"
 #include "esp_websocket_client.h"
+#include "esp_crt_bundle.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -82,8 +83,25 @@ static void on_ws(void *arg, esp_event_base_t base, int32_t id, void *data) {
                 s_on_audio(payload, plen);
             }
         } else if (d->op_code == 0x01) {     // text = one Lugo JSON event
-            char buf[512];
-            int n = d->data_len < (int)sizeof(buf) - 1 ? d->data_len : (int)sizeof(buf) - 1;
+            // Sized at WS_BUF_SIZE, not the 512 it used to be: anything larger
+            // than WS_BUF_SIZE already arrives fragmented and is rejected
+            // above, so this now covers every frame that can reach here and
+            // silent truncation is impossible. At 512 the whole 512..2048 band
+            // was memcpy'd in half and parsed as if complete — a long stt
+            // transcript came through cut, and an mcp tools/call whose params
+            // straddled the cut simply became "unknown tool" with nothing in
+            // the log to explain it (outbound mcp frames get 3072 bytes, so
+            // the two directions were 6x apart).
+            //
+            // static, not on the stack: the ws task's 8 KB also carries
+            // on_event()'s whole call chain. Safe because esp_websocket_client
+            // dispatches every event from its own single task.
+            static char buf[WS_BUF_SIZE + 1];
+            int n = d->data_len;
+            if (n > (int)sizeof(buf) - 1) {   // unreachable via the check above; fail loudly if it ever isn't
+                ESP_LOGW(TAG, "text frame %d B exceeds %d B buffer — truncating", n, (int)sizeof(buf) - 1);
+                n = (int)sizeof(buf) - 1;
+            }
             memcpy(buf, d->data_ptr, n); buf[n] = '\0';
             lugo_event_t ev;
             if (lugo_parse_event(buf, &ev) == 0 && s_on_event) s_on_event(&ev);
@@ -166,7 +184,13 @@ esp_err_t ws_client_start(const char *host, int port, bool secure,
         .uri = uri, .network_timeout_ms = 10000,
         .disable_auto_reconnect = true,  // ws_conn_task drives connect/disconnect
         .buffer_size = WS_BUF_SIZE,
-        .task_stack = 8192,  // on_event() calls into display/i2s on this task
+        .task_stack = 8192,  // on_event() runs the whole lugo/mcp dispatch here
+        // wss:// needs a CA to verify the server against, and this client had
+        // none — so CONFIG_AA_SERVER_SECURE=y built a wss:// URI that could
+        // never complete a handshake. The bundle is already compiled in
+        // (CONFIG_MBEDTLS_CERTIFICATE_BUNDLE), it just has to be attached.
+        // NULL for ws://, where esp-tls is not in the path at all.
+        .crt_bundle_attach = secure ? esp_crt_bundle_attach : NULL,
     };
     s_client = esp_websocket_client_init(&wc);
     if (!s_client) return ESP_ERR_NO_MEM;

@@ -1,5 +1,6 @@
 #include "pairing.h"
 #include "esp_http_client.h"
+#include "esp_crt_bundle.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -35,7 +36,15 @@ static int extract_str(const char *json, const char *key, char *out, int cap) {
 // Minimal blocking GET/POST into a fixed buffer. Returns HTTP status, or <0 on transport error.
 static int http_call(const char *url, const char *method, const char *body,
                      char *resp, int resp_cap) {
-    esp_http_client_config_t cfg = { .url = url, .timeout_ms = 30000 };
+    esp_http_client_config_t cfg = {
+        .url = url, .timeout_ms = 30000,
+        // Attach the compiled-in CA bundle so an https:// base_url (i.e.
+        // CONFIG_AA_SERVER_SECURE=y) can actually verify the gateway. Without
+        // it esp-tls has no trust anchor and every pairing request failed the
+        // handshake, so the secure build could never claim a token at all.
+        // Harmless on plain http://, where the TLS stack is never entered.
+        .crt_bundle_attach = esp_crt_bundle_attach,
+    };
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
     if (!c) return -1;
     esp_http_client_set_method(c, strcmp(method, "POST") == 0
