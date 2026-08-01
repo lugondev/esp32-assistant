@@ -32,9 +32,21 @@ static const char *TAG = "display";
 
 static esp_lcd_panel_handle_t s_panel;
 
+// Set only after a fully successful init, exactly like the ssd1306 driver's
+// flag of the same name. When false (bad wiring, an SPI bus already taken, a
+// panel that never answered) show()/flush()/set_backlight() become no-ops so
+// the device boots and runs headless — main.c's display_init() call site
+// promises this ("a missing/miswired panel must not boot-loop the device"),
+// and before this flag existed the ESP_ERROR_CHECKs below broke that promise
+// by aborting instead.
+static bool s_ready;
+
 // Backlight GPIO, cached at init time so st7789_set_backlight (which is
-// cfg-less by the display_ops_t signature) can re-drive it later.
-int g_st7789_bl_pin;
+// cfg-less by the display_ops_t signature) can re-drive it later. -1 means
+// "this board has no backlight pin" (both C3 board_defs wire the panel's LED
+// straight to 3V3 and set .bl = -1) — every use below must check, since
+// `1ULL << -1` is undefined behaviour and gpio_set_level(-1) is invalid.
+static int s_bl_pin = -1;
 
 // Fewer, larger SPI transactions are more reliable than many tiny ones on
 // jumper-wire wiring (each transaction re-sends the row-address-set command;
@@ -44,6 +56,7 @@ int g_st7789_bl_pin;
 #define CLEAR_CHUNK_ROWS 24
 
 static void clear_screen(void) {
+    if (!s_ready) return;   // no panel (init failed / none wired): run headless
     // Lazily-allocated PSRAM scratch, NOT a static array: the static version
     // pinned 11.5KB of internal SRAM for the device's whole life (static
     // storage exists whether or not this ever runs) — internal RAM is the
@@ -51,9 +64,15 @@ static void clear_screen(void) {
     // off PSRAM buffers everywhere else (robot_eyes, statusbar).
     static uint16_t *black_chunk;
     if (!black_chunk) {
-        black_chunk = heap_caps_calloc((size_t)DISP_WIDTH * CLEAR_CHUNK_ROWS,
-                                        sizeof(uint16_t), MALLOC_CAP_SPIRAM);
-        if (!black_chunk) return;   // no PSRAM: skip the clear rather than crash
+        const size_t n = (size_t)DISP_WIDTH * CLEAR_CHUNK_ROWS;
+        black_chunk = heap_caps_calloc(n, sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+        // Fall back to internal RAM where there is no PSRAM (the C3 has none,
+        // so the SPIRAM request there always fails) — otherwise this returned
+        // early every time and an ST7789 on a C3 was simply never cleared,
+        // leaving whatever was in panel RAM behind the UI.
+        if (!black_chunk)
+            black_chunk = heap_caps_calloc(n, sizeof(uint16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (!black_chunk) return;   // genuinely out of memory: skip, don't crash
     }
     for (int y = 0; y < DISP_HEIGHT; y += CLEAR_CHUNK_ROWS) {
         esp_lcd_panel_draw_bitmap(s_panel, 0, y, DISP_WIDTH, y + CLEAR_CHUNK_ROWS, black_chunk);
@@ -61,6 +80,7 @@ static void clear_screen(void) {
 }
 
 static void draw_char(int x, int y, char c) {
+    if (!s_ready) return;
     const uint8_t *glyph = display_font_glyph(c);
     if (!glyph) return;
     uint16_t px[DISPLAY_FONT_GLYPH_WIDTH * DISPLAY_FONT_GLYPH_HEIGHT];
@@ -86,13 +106,30 @@ static void draw_line(const char *text, int y) {
 
 static esp_err_t st7789_init(const void *cfg_v) {
     const display_st7789_cfg_t *c = (const display_st7789_cfg_t *)cfg_v;
-    gpio_config_t bl_cfg = {
-        .pin_bit_mask = 1ULL << c->bl,
-        .mode = GPIO_MODE_OUTPUT,
-    };
-    ESP_ERROR_CHECK(gpio_config(&bl_cfg));
-    gpio_set_level(c->bl, 1);
-    g_st7789_bl_pin = c->bl;
+
+    // Every failure below is non-fatal: log it and return the error so
+    // display_init()'s caller runs headless (see s_ready). This used to be
+    // ESP_ERROR_CHECK throughout, which aborts — so a panel that couldn't
+    // come up boot-looped the device instead of being skipped. Same macro
+    // and rationale as the ssd1306 driver's DISP_TRY.
+#define DISP_TRY(expr) do { esp_err_t _e = (expr); if (_e != ESP_OK) { \
+        ESP_LOGE(TAG, "display init: %s failed (%s) — running headless", #expr, esp_err_to_name(_e)); \
+        return _e; } } while (0)
+
+    // .bl < 0 means the panel's LED is hard-wired to 3V3 (both C3 boards).
+    // Skip the GPIO entirely: `1ULL << -1` is undefined behaviour, and the
+    // bit-63 mask it produced in practice made gpio_config return
+    // ESP_ERR_INVALID_ARG — which the old ESP_ERROR_CHECK turned into an
+    // abort, so the ST7789 fallback path could never boot on those boards.
+    s_bl_pin = c->bl;
+    if (s_bl_pin >= 0) {
+        gpio_config_t bl_cfg = {
+            .pin_bit_mask = 1ULL << (unsigned)s_bl_pin,
+            .mode = GPIO_MODE_OUTPUT,
+        };
+        DISP_TRY(gpio_config(&bl_cfg));
+        gpio_set_level(s_bl_pin, 1);
+    }
 
     spi_bus_config_t buscfg = {
         .mosi_io_num = c->mosi,
@@ -112,7 +149,7 @@ static esp_err_t st7789_init(const void *cfg_v) {
         // flush-speed lever is DISP_PCLK_HZ above, not fewer transactions.
         .max_transfer_sz = DISP_WIDTH * DISPLAY_FONT_GLYPH_HEIGHT * 2,
     };
-    ESP_ERROR_CHECK(spi_bus_initialize(DISP_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO));
+    DISP_TRY(spi_bus_initialize(DISP_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO));
 
     esp_lcd_panel_io_handle_t io_handle;
     esp_lcd_panel_io_spi_config_t io_config = {
@@ -128,24 +165,26 @@ static esp_err_t st7789_init(const void *cfg_v) {
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)DISP_SPI_HOST,
-                                              &io_config, &io_handle));
+    DISP_TRY(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)DISP_SPI_HOST,
+                                       &io_config, &io_handle));
 
     esp_lcd_panel_dev_config_t panel_config = {
         .reset_gpio_num = c->rst,
         .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
         .bits_per_pixel = 16,
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(io_handle, &panel_config, &s_panel));
+    DISP_TRY(esp_lcd_new_panel_st7789(io_handle, &panel_config, &s_panel));
 
-    ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
-    ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
-    ESP_ERROR_CHECK(esp_lcd_panel_set_gap(s_panel, 0, 0));
-    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(s_panel, true));
-    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
+    DISP_TRY(esp_lcd_panel_reset(s_panel));
+    DISP_TRY(esp_lcd_panel_init(s_panel));
+    DISP_TRY(esp_lcd_panel_set_gap(s_panel, 0, 0));
+    DISP_TRY(esp_lcd_panel_invert_color(s_panel, true));
+    DISP_TRY(esp_lcd_panel_disp_on_off(s_panel, true));
+#undef DISP_TRY
 
+    s_ready = true;   // must precede clear_screen(): it draws through the guard
     clear_screen();
-    ESP_LOGI(TAG, "display ready");
+    ESP_LOGI(TAG, "display ready (st7789 spi %dx%d, bl=%d)", DISP_WIDTH, DISP_HEIGHT, s_bl_pin);
     return ESP_OK;
 }
 
@@ -170,13 +209,18 @@ static void st7789_show(const char *line1, const char *line2) {
 // pass through directly, same as clear_screen's larger-than-max_transfer_sz
 // chunked writes already rely on.
 static void st7789_flush(int x, int y, int w, int h, const uint16_t *rgb565) {
+    if (!s_ready) return;   // no panel (init failed / none wired): run headless
     esp_lcd_panel_draw_bitmap(s_panel, x, y, x + w, y + h, rgb565);
 }
 
 // GPIO on/off only (no PWM dimming). Re-drives the pin captured at init time
-// since display_ops_t functions are cfg-less by signature.
+// since display_ops_t functions are cfg-less by signature. A board with no
+// backlight pin (s_bl_pin < 0, e.g. LED tied to 3V3) accepts the call and does
+// nothing, so self.screen.set_backlight stays safe to invoke everywhere —
+// same contract as the ssd1306's no-op backlight.
 static void st7789_set_backlight(bool on) {
-    gpio_set_level(g_st7789_bl_pin, on ? 1 : 0);
+    if (!s_ready || s_bl_pin < 0) return;
+    gpio_set_level(s_bl_pin, on ? 1 : 0);
 }
 
 const display_ops_t display_st7789_ops = {
