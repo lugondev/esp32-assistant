@@ -1,4 +1,5 @@
 #include "i2s_fd.h"
+#include "i2s_pcm.h"
 #include "driver/i2s_std.h"
 #include "soc/soc_caps.h"
 #include "esp_log.h"
@@ -16,6 +17,14 @@ static bool s_ready;   // guards init (both mic->init and speaker->init call it)
 
 #define FD_MIC_MAX_SAMPLES 960
 #define FD_SPK_SCRATCH 512
+
+// Board gain for the mic's 32-bit left-justified slot (see i2s_pcm.h). 12 is
+// what the C3 boards were brought up and validated at (xiaozhi uses the same
+// value on this wiring); the dual-I2S S3 driver declares 11, i.e. 6 dB louder.
+// Whether the two SHOULD converge is a hardware-tuning question — the point of
+// naming it here is that the difference is now a visible, deliberate per-board
+// constant instead of a divergence hidden in two copy-pasted loops.
+#define FD_MIC_GAIN_SHIFT 12
 
 // Allocate both channels once. Idempotent: mic->init and speaker->init both
 // call it; init order does not matter.
@@ -83,14 +92,14 @@ static int fd_mic_read(int16_t *pcm, int samples) {
     if (samples > FD_MIC_MAX_SAMPLES) samples = FD_MIC_MAX_SAMPLES;
     static int32_t raw[FD_MIC_MAX_SAMPLES];   // MONO: one 32-bit slot per sample
     size_t br = 0;
+    // Bounded wait, unlike the dual-I2S driver's portMAX_DELAY: the RX channel
+    // here shares its controller with TX, so a stall must not park mic_task
+    // forever. A timeout surfaces as a short read, which the mic_ops_t contract
+    // explicitly permits.
     if (i2s_channel_read(s_rx, raw, samples * sizeof(int32_t), &br, pdMS_TO_TICKS(200)) != ESP_OK)
-        return 0;
+        return -1;   // per mic_ops_t: -1 is an error, 0 is a legitimate empty read
     int frames = (int)(br / sizeof(int32_t));
-    for (int i = 0; i < frames; i++) {            // 32-bit -> 16-bit, clamp (xiaozhi >>12)
-        int32_t v = raw[i] >> 12;
-        if (v > 32767) v = 32767; else if (v < -32767) v = -32767;
-        pcm[i] = (int16_t)v;
-    }
+    i2s_pcm_from_i2s32(raw, frames, FD_MIC_GAIN_SHIFT, pcm);
     return frames;
 }
 

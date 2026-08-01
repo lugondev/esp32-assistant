@@ -1,4 +1,5 @@
 #include "i2s_mic.h"
+#include "i2s_pcm.h"
 #include "driver/i2s_std.h"
 #include "soc/soc_caps.h"
 #include "esp_log.h"
@@ -12,6 +13,15 @@ static i2s_chan_handle_t s_rx;
 // Largest samples value any caller passes (mic_task reads OPUS_UP_SAMPLES == 960).
 // Fixed buffer (not a VLA) to keep stack usage bounded.
 #define MIC_MAX_SAMPLES 960
+
+// Board gain, applied as an arithmetic right shift on the mic's 32-bit
+// left-justified slot (see i2s_pcm.h). The INMP441 delivers ~18-bit-deep
+// samples, so a straight >>16 leaves speech near -60 dBFS; 11 adds ~+30 dB.
+// One step is 6 dB. This is the value the S3 boards have been tuned and
+// hardware-validated at — the C3 driver deliberately declares its own (see
+// i2s_fd.c's FD_MIC_GAIN_SHIFT), which is why the shift is a per-driver
+// constant rather than a shared one.
+#define MIC_GAIN_SHIFT 11
 
 static esp_err_t mic_init(const void *cfg_v) {
     const i2s_mic_cfg_t *c = (const i2s_mic_cfg_t *)cfg_v;
@@ -48,16 +58,14 @@ static int mic_read(int16_t *pcm, int samples) {
     if (samples > MIC_MAX_SAMPLES) samples = MIC_MAX_SAMPLES;
     static int32_t raw[MIC_MAX_SAMPLES];   // MONO: one 32-bit slot per sample
     size_t bytes_read = 0;
+    // portMAX_DELAY: this channel has a dedicated RX controller and always
+    // clocks, so the read returns as soon as a full frame is in the DMA. The
+    // mic_ops_t contract allows either this or a timing-out short read (the
+    // single-I2S driver does the latter).
     esp_err_t err = i2s_channel_read(s_rx, raw, samples * sizeof(int32_t), &bytes_read, portMAX_DELAY);
     if (err != ESP_OK) return -1;
     int frames = (int)(bytes_read / sizeof(int32_t));
-    // The INMP441 delivers ~18-bit-deep, left-justified samples. A straight
-    // >>16 leaves speech near -60 dBFS; >>11 adds ~+30 dB, clamped.
-    for (int i = 0; i < frames; i++) {
-        int32_t v = raw[i] >> 11;
-        if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
-        pcm[i] = (int16_t)v;
-    }
+    i2s_pcm_from_i2s32(raw, frames, MIC_GAIN_SHIFT, pcm);
     return frames;
 }
 
