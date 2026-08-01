@@ -56,8 +56,11 @@ int lugo_json_get_int(const char *json, const char *key);
 int lugo_json_get_bool(const char *json, const char *key, int default_val);
 
 // Builders. Return bytes written (excluding NUL), or -1 on overflow.
-int lugo_build_wakeup(char *buf, int buflen, const char *profile,
-                      int in_sr, int out_sr, int frame_ms);
+// The wakeup carries no `profile`: the gateway decides which profile a device
+// runs, either from the binding attached to the paired device or from its own
+// defaults. A device-declared name would be overridden anyway.
+int lugo_build_wakeup(char *buf, int buflen, int in_sr, int out_sr,
+                      int frame_ms);
 int lugo_build_abort(char *buf, int buflen, const char *reason);
 // Ask the gateway to end this conversation and start a fresh one on the same
 // socket. Answered with a `session_new` event.

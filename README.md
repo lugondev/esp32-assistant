@@ -74,9 +74,10 @@ idf.py menuconfig
 Navigate to **"Assistant configuration"** and set:
 
 WiFi credentials are no longer set here — see **WiFi provisioning** below. STT
-engine / TTS voice / language / LLM all come from the server-side **profile**
-(`AA_PROFILE`), not compile-time options. Audio/display pins come from the
-selected **board** (see **Boards & wiring**), not from this table.
+engine / TTS voice / language / LLM all come from the server-side **profile**,
+and so does the choice of profile itself — the device does not configure one.
+Audio/display pins come from the selected **board** (see **Boards & wiring**),
+not from this table.
 
 | Option | Key | Default | Notes |
 |--------|-----|---------|-------|
@@ -84,7 +85,6 @@ selected **board** (see **Boards & wiring**), not from this table.
 | Gateway host | `AA_SERVER_HOST` | `192.168.1.50` | IP or domain |
 | Gateway port | `AA_SERVER_PORT` | `8000` | |
 | Use wss:// (TLS) | `AA_SERVER_SECURE` | off | Enable for production |
-| Chatllm profile (optional) | `AA_PROFILE` | *(empty)* | Named profile from `POST /v1/profiles` — bundles STT engine + language, TTS voice, LLM model/system prompt, MCP tools, memory. Empty → server `.env` defaults |
 
 Mic/speaker/display/button pins are defined per board in
 `components/boards/<name>/board_def.c` — **pick the board that matches your wiring** rather than
@@ -206,16 +206,16 @@ text frames carrying lifecycle events (`session_started`, `speech_start`, `speec
 For the full protocol specification, see
 [`../agent-assistant/integration.md`](../agent-assistant/integration.md).
 
-**Profiles (chatllm presets):** the gateway can bundle LLM model/system prompt/TTS/MCP
-tools/memory into a named **profile** (`POST /v1/profiles`) and activate it with
-`?profile=<name>` on the WS URL — see
+**Profiles (chatllm presets):** the gateway bundles LLM model/system prompt/TTS/MCP
+tools/memory into a named **profile** (`POST /v1/profiles`) — see
 [`../docs/device-integration.md`](../docs/device-integration.md#1a-profiles-connect-a-device-as-a-preset-chatllm-persona).
-Set **`AA_PROFILE`** in `menuconfig` → "Assistant configuration" (empty by default = no
-profile sent). When set, it's sent in the Lugo `wakeup` handshake; the profile owns the STT
-engine + language, TTS voice, LLM, MCP tools and memory server-side (empty → the server's
-`.env` defaults). The Raspberry Pi clients
-(`scripts/rpi_voice_client.py --profile <name>` and `agent-assistant/`'s
-`session.profile` in `config.yaml`) support the same param.
+
+**The device does not choose its profile, and has no setting for one.** The Lugo `wakeup`
+handshake carries no `profile` field: the gateway resolves it from the binding stored on the
+paired device (`devices.profile_id`, set at pair/claim or via
+`POST /v1/devices/mine/<id>/profile`), and falls back to the server's `.env` defaults when the
+device is unbound. That binding outranks anything a client declares anyway, so assign the
+profile server-side — re-pointing a speaker at a different persona needs no reflash.
 
 ---
 

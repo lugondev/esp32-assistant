@@ -24,14 +24,16 @@ typedef void (*ws_audio_cb_t)(const uint8_t *opus, int len);
 #define MCP_FRAME_BUF_SIZE 3072
 
 // Connect to WS /v1/lugo/stream and, on connect, send the Lugo `wakeup`
-// handshake declaring `profile` + audio params. Downlink audio arrives v3-framed
-// and is delivered (opus payload only) via on_audio; JSON events via on_event.
+// handshake declaring audio params. The profile is not ours to declare -- the
+// gateway resolves it from the paired device's binding, falling back to its own
+// defaults. Downlink audio arrives v3-framed and is delivered (opus payload
+// only) via on_audio; JSON events via on_event.
 // device_token (may be NULL/empty) is sent as the ?device_token= query param.
 // Query param, not a header, because that is the only place the gateway looks
 // for a device token (api_gateway auth_guard.py, _ws_identity) -- moving it to
 // Authorization would need a coordinated server change.
 esp_err_t ws_client_start(const char *host, int port, bool secure,
-                          const char *profile, const char *device_token,
+                          const char *device_token,
                           int in_sr, int out_sr, int frame_ms,
                           ws_event_cb_t on_event, ws_audio_cb_t on_audio);
 int  ws_client_send_audio(const uint8_t *opus, int len);  // raw opus uplink

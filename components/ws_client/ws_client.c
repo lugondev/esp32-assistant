@@ -21,7 +21,6 @@ static volatile bool s_connected;
 static volatile bool s_reconnect_enabled = true;
 
 // Wakeup handshake params, captured in ws_client_start and sent on CONNECTED.
-static char s_profile[64];
 static int  s_in_sr, s_out_sr, s_frame_ms;
 
 // HTTP status of a rejected WS handshake since the last CONNECTED (e.g. 403
@@ -38,7 +37,7 @@ static void on_ws(void *arg, esp_event_base_t base, int32_t id, void *data) {
         s_last_handshake_status = 0;
         ESP_LOGI(TAG, "connected");
         char buf[256];
-        int n = lugo_build_wakeup(buf, sizeof buf, s_profile, s_in_sr, s_out_sr, s_frame_ms);
+        int n = lugo_build_wakeup(buf, sizeof buf, s_in_sr, s_out_sr, s_frame_ms);
         if (n > 0) esp_websocket_client_send_text(s_client, buf, n, portMAX_DELAY);
         break;
     }
@@ -160,11 +159,10 @@ void ws_client_set_reconnect(bool enabled) {
 }
 
 esp_err_t ws_client_start(const char *host, int port, bool secure,
-                          const char *profile, const char *device_token,
+                          const char *device_token,
                           int in_sr, int out_sr, int frame_ms,
                           ws_event_cb_t on_event, ws_audio_cb_t on_audio) {
     s_on_event = on_event; s_on_audio = on_audio;
-    strncpy(s_profile, profile ? profile : "", sizeof(s_profile) - 1);
     s_in_sr = in_sr; s_out_sr = out_sr; s_frame_ms = frame_ms;
 
     static char uri[512];
