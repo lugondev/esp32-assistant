@@ -48,6 +48,18 @@ const char *lugo_json_find(const char *json, const char *key);
 // unescaped). out is "" if the key is absent or not a string.
 void lugo_json_get_string(const char *json, const char *key, char *out, size_t cap);
 
+// Same, but refuses to truncate. Returns 0 on success (out holds the full
+// unescaped value), or -1 if the key is absent, is not a string, has no
+// closing quote, or its decoded value would not fit in cap (out is "" then).
+//
+// Use this wherever a partially-copied value is worse than no value: secrets
+// and identifiers (device tokens, pairing codes) are accepted by the server as
+// an exact match or not at all, so a silent truncation turns into an
+// unexplainable auth failure far from the parse. Display strings should keep
+// using the lenient lugo_json_get_string() — a clipped status line is fine.
+int lugo_json_get_string_strict(const char *json, const char *key,
+                                char *out, size_t cap);
+
 // Read the integer value for key; 0 if absent/non-numeric.
 int lugo_json_get_int(const char *json, const char *key);
 

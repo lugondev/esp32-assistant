@@ -142,6 +142,47 @@ static void test_json_find_returns_object_pointer(void) {
     CHECK(lugo_json_get_int(p, "x") == 5);
 }
 
+// The strict variant exists for values where a truncated copy is worse than no
+// copy at all — a device token, a pairing code. The lenient
+// lugo_json_get_string() keeps its truncating behaviour for display strings.
+static void test_json_get_string_strict_accepts_a_fitting_value(void) {
+    char out[8];
+    CHECK(lugo_json_get_string_strict("{\"token\":\"ABC\"}", "token", out, sizeof out) == 0);
+    CHECK(strcmp(out, "ABC") == 0);
+}
+
+static void test_json_get_string_strict_accepts_an_exactly_fitting_value(void) {
+    char out[4];   // 3 chars + NUL
+    CHECK(lugo_json_get_string_strict("{\"token\":\"ABC\"}", "token", out, sizeof out) == 0);
+    CHECK(strcmp(out, "ABC") == 0);
+}
+
+static void test_json_get_string_strict_rejects_an_oversized_value(void) {
+    char out[4];
+    CHECK(lugo_json_get_string_strict("{\"token\":\"ABCD\"}", "token", out, sizeof out) == -1);
+}
+
+static void test_json_get_string_strict_rejects_an_unterminated_value(void) {
+    char out[32];
+    CHECK(lugo_json_get_string_strict("{\"token\":\"ABC", "token", out, sizeof out) == -1);
+}
+
+static void test_json_get_string_strict_rejects_absent_or_non_string(void) {
+    char out[32];
+    CHECK(lugo_json_get_string_strict("{\"other\":1}", "token", out, sizeof out) == -1);
+    CHECK(lugo_json_get_string_strict("{\"token\":42}", "token", out, sizeof out) == -1);
+}
+
+// Escapes are unescaped like the lenient variant, and the fit is judged on the
+// DECODED length — "\\n" is two source characters but one output character.
+static void test_json_get_string_strict_measures_the_decoded_length(void) {
+    char out[3];   // 2 chars + NUL
+    CHECK(lugo_json_get_string_strict("{\"t\":\"a\\nb\"}", "t", out, sizeof out) == -1);
+    char out2[4];
+    CHECK(lugo_json_get_string_strict("{\"t\":\"a\\nb\"}", "t", out2, sizeof out2) == 0);
+    CHECK(strcmp(out2, "a\nb") == 0);
+}
+
 int main(void) {
     test_frame_roundtrip();
     test_frame_bad();
@@ -155,6 +196,12 @@ int main(void) {
     test_mcp_payload_pointer();
     test_json_get_bool();
     test_json_find_returns_object_pointer();
+    test_json_get_string_strict_accepts_a_fitting_value();
+    test_json_get_string_strict_accepts_an_exactly_fitting_value();
+    test_json_get_string_strict_rejects_an_oversized_value();
+    test_json_get_string_strict_rejects_an_unterminated_value();
+    test_json_get_string_strict_rejects_absent_or_non_string();
+    test_json_get_string_strict_measures_the_decoded_length();
     if (failures) { printf("%d failure(s)\n", failures); return 1; }
     printf("all lugo_protocol tests passed\n");
     return 0;
