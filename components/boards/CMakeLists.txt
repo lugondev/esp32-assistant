@@ -6,6 +6,10 @@
 file(GLOB BOARD_SRCS "${CMAKE_CURRENT_SOURCE_DIR}/*/board_def.c")
 idf_component_register(
     SRCS ${BOARD_SRCS}
+    # board_common.h lives here, next to the per-board subdirectories that
+    # include it; a board_def.c's own directory is searched first, so this is
+    # what makes `#include "board_common.h"` resolve from a subdirectory.
+    PRIV_INCLUDE_DIRS "."
     REQUIRES board audio display buttons battery
     LDFRAGMENTS "linker.lf"
     WHOLE_ARCHIVE)

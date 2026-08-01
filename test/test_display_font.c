@@ -89,6 +89,63 @@ static void test_downscale_output_width_never_exceeds_requested(void) {
     for (int i = 0; i < 7; i++) CHECK((out[i] & ~0x1F) == 0);  // no stray bits >= bit 5
 }
 
+
+// --- display_show()'s vertical layout --------------------------------------
+// Both panel drivers place one or two centered lines with the same arithmetic.
+// It used to be written out twice, once per driver, including the magic gap.
+
+static void test_layout_lines_centers_a_single_line(void) {
+    int y1 = -1, y2 = -1;
+    display_layout_lines(64, false, &y1, &y2);
+    CHECK(y1 == (64 - DISPLAY_FONT_GLYPH_HEIGHT) / 2);
+}
+
+static void test_layout_lines_centers_the_pair_as_a_block(void) {
+    int y1 = -1, y2 = -1;
+    display_layout_lines(64, true, &y1, &y2);
+    int block = 2 * DISPLAY_FONT_GLYPH_HEIGHT + DISPLAY_FONT_LINE_GAP;
+    CHECK(y1 == (64 - block) / 2);
+    CHECK(y2 == y1 + DISPLAY_FONT_GLYPH_HEIGHT + DISPLAY_FONT_LINE_GAP);
+    // The block is centered: the margin above line 1 equals the margin below
+    // line 2, which is the property a reader actually cares about.
+    CHECK(y1 == 64 - (y2 + DISPLAY_FONT_GLYPH_HEIGHT));
+}
+
+// A two-line screen sits higher than a one-line screen of the same text.
+static void test_layout_lines_two_lines_start_above_one(void) {
+    int one_y1 = -1, one_y2 = -1, two_y1 = -1, two_y2 = -1;
+    display_layout_lines(240, false, &one_y1, &one_y2);
+    display_layout_lines(240, true, &two_y1, &two_y2);
+    CHECK(two_y1 < one_y1);
+}
+
+// --- centered string walk ---------------------------------------------------
+
+struct capture { int n; int x[8]; int y[8]; char c[8]; };
+static void record_glyph(int x, int y, const uint8_t *glyph, void *ctx) {
+    struct capture *cap = ctx;
+    (void)glyph;
+    if (cap->n < 8) { cap->x[cap->n] = x; cap->y[cap->n] = y; cap->c[cap->n] = 'x'; cap->n++; }
+}
+
+static void test_draw_centered_emits_one_glyph_per_char_advancing_right(void) {
+    struct capture cap = { 0, {0}, {0}, {0} };
+    display_font_draw_centered("AB", 5, 64, record_glyph, &cap);
+    CHECK(cap.n == 2);
+    CHECK(cap.x[0] == display_layout_line("AB", 64));
+    CHECK(cap.x[1] == cap.x[0] + DISPLAY_FONT_GLYPH_WIDTH);
+    CHECK(cap.y[0] == 5);
+    CHECK(cap.y[1] == 5);
+}
+
+// Text wider than the screen is skipped entirely rather than wrapped or cut
+// mid-character — the same rule display_layout_line already encodes.
+static void test_draw_centered_skips_text_too_wide_for_the_screen(void) {
+    struct capture cap = { 0, {0}, {0}, {0} };
+    display_font_draw_centered("ABCDEFGH", 0, 16, record_glyph, &cap);
+    CHECK(cap.n == 0);
+}
+
 int main(void) {
     test_glyph_space();
     test_glyph_known_letter();
@@ -103,6 +160,11 @@ int main(void) {
     test_downscale_blank_glyph_stays_blank();
     test_downscale_preserves_a_single_top_left_pixel();
     test_downscale_output_width_never_exceeds_requested();
+    test_layout_lines_centers_a_single_line();
+    test_layout_lines_centers_the_pair_as_a_block();
+    test_layout_lines_two_lines_start_above_one();
+    test_draw_centered_emits_one_glyph_per_char_advancing_right();
+    test_draw_centered_skips_text_too_wide_for_the_screen();
     if (failures) { printf("%d FAILURES\n", failures); return 1; }
     printf("ALL PASS\n");
     return 0;

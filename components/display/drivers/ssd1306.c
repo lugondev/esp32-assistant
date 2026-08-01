@@ -1,6 +1,7 @@
 #include "display.h"
 #include "display_ssd1306.h"
 #include "display_font.h"
+#include "display_try.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
@@ -59,22 +60,15 @@ static void clear_screen(void) {
     push_all();
 }
 
-static void draw_char(int x, int y, char c) {
-    const uint8_t *glyph = display_font_glyph(c);
-    if (!glyph) return;
+// display_font_draw_centered callback: bit-poke the glyph into the shadow
+// framebuffer. Clear bits are written too (as off), which is what makes a
+// redraw over stale pixels work without clearing the whole page first.
+static void put_glyph(int x, int y, const uint8_t *glyph, void *ctx) {
+    (void)ctx;
     for (int row = 0; row < DISPLAY_FONT_GLYPH_HEIGHT; row++) {
         uint8_t bits = glyph[row];
         for (int col = 0; col < DISPLAY_FONT_GLYPH_WIDTH; col++)
             set_pixel(x + col, y + row, (bits >> col) & 1);
-    }
-}
-
-static void draw_line(const char *text, int y) {
-    int x = display_layout_line(text, DISP_WIDTH);
-    if (x < 0) return;  // too wide for the screen — skip rather than wrap
-    for (const char *p = text; *p; p++) {
-        draw_char(x, y, *p);
-        x += DISPLAY_FONT_GLYPH_WIDTH;
     }
 }
 
@@ -111,11 +105,8 @@ static esp_err_t ssd1306_init(const void *cfg_v) {
     }
     if (!found) ESP_LOGW(TAG, "i2c scan found NOTHING on scl=%d/sda=%d — check wiring/power", c->scl, c->sda);
 
-    // From here on, failures are non-fatal: log and return an error so the
-    // device boots headless (see s_ready) rather than boot-looping on abort().
-#define DISP_TRY(expr) do { esp_err_t _e = (expr); if (_e != ESP_OK) { \
-        ESP_LOGE(TAG, "display init: %s failed (%s) — running headless", #expr, esp_err_to_name(_e)); \
-        return _e; } } while (0)
+    // From here on, failures are non-fatal (DISP_TRY): the device boots
+    // headless (see s_ready) rather than boot-looping on abort().
 
     esp_lcd_panel_io_handle_t io_handle;
     esp_lcd_panel_io_i2c_config_t io_config = {
@@ -153,7 +144,6 @@ static esp_err_t ssd1306_init(const void *cfg_v) {
     // horizontal reversed, showing as a left-right mirror. Flip both.
     DISP_TRY(esp_lcd_panel_mirror(s_panel, true, true));
     DISP_TRY(esp_lcd_panel_disp_on_off(s_panel, true));
-#undef DISP_TRY
 
     s_ready = true;
     clear_screen();
@@ -164,16 +154,10 @@ static esp_err_t ssd1306_init(const void *cfg_v) {
 
 static void ssd1306_show(const char *line1, const char *line2) {
     memset(s_fb, 0, sizeof s_fb);
-    if (line2 == NULL) {
-        draw_line(line1, (DISP_HEIGHT - DISPLAY_FONT_GLYPH_HEIGHT) / 2);
-    } else {
-        int gap = 4;
-        int total_h = 2 * DISPLAY_FONT_GLYPH_HEIGHT + gap;
-        int y1 = (DISP_HEIGHT - total_h) / 2;
-        int y2 = y1 + DISPLAY_FONT_GLYPH_HEIGHT + gap;
-        draw_line(line1, y1);
-        draw_line(line2, y2);
-    }
+    int y1, y2;
+    display_layout_lines(DISP_HEIGHT, line2 != NULL, &y1, &y2);
+    display_font_draw_centered(line1, y1, DISP_WIDTH, put_glyph, NULL);
+    if (line2) display_font_draw_centered(line2, y2, DISP_WIDTH, put_glyph, NULL);
     push_all();
 }
 

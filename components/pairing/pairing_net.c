@@ -1,4 +1,5 @@
 #include "pairing.h"
+#include "lugo_protocol.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
@@ -9,29 +10,13 @@
 
 static const char *TAG = "pairing";
 
-// Extract a JSON string field value: finds "key" then the colon that follows
-// it, and copies the quoted value that follows. Tolerates optional spaces/
-// tabs between the colon and the opening quote (e.g. "key": "value"),
-// because a proxy/logging layer reformatting the JSON should not silently
-// break pairing.
-static int extract_str(const char *json, const char *key, char *out, int cap) {
-    char pat[48];
-    snprintf(pat, sizeof pat, "\"%s\"", key);
-    const char *p = strstr(json, pat);
-    if (!p) return -1;
-    p += strlen(pat);
-    while (*p && *p != ':') p++;
-    if (!*p) return -1;
-    p++; // skip colon
-    while (*p == ' ' || *p == '\t') p++;
-    if (*p != '"') return -1;
-    p++; // skip opening quote
-    int i = 0;
-    while (p[i] && p[i] != '"' && i < cap - 1) { out[i] = p[i]; i++; }
-    if (p[i] != '"') return -1;
-    out[i] = '\0';
-    return i;
-}
+// JSON parsing is lugo_protocol's job (lugo_json_get_string_strict), not this
+// file's. There used to be a hand-rolled extract_str() here and a second,
+// subtly different hand-rolled parser in pairing_logic.c — three parsers in the
+// firmware for one JSON dialect, each with its own idea of which whitespace is
+// legal after a colon. The strict getter keeps the property this code depends
+// on: a value too long for its buffer is an ERROR, never a silent truncation
+// (see AA_PAIR_CODE_MAX in pairing.h for what that cost last time).
 
 // Minimal blocking GET/POST into a fixed buffer. Returns HTTP status, or <0 on transport error.
 static int http_call(const char *url, const char *method, const char *body,
@@ -74,8 +59,8 @@ int aa_run_pairing(const char *base_url, const char *serial,
         snprintf(body, sizeof body, "{\"serial\":\"%s\"}", serial);
         int st = http_call(url, "POST", body, resp, sizeof resp);
         if (st != 200) { ESP_LOGW(TAG, "pair/init http %d", st); vTaskDelay(pdMS_TO_TICKS(3000)); continue; }
-        if (extract_str(resp, "code", code, sizeof code) < 0 ||
-            extract_str(resp, "poll_token", poll_token, sizeof poll_token) < 0) {
+        if (lugo_json_get_string_strict(resp, "code", code, sizeof code) != 0 ||
+            lugo_json_get_string_strict(resp, "poll_token", poll_token, sizeof poll_token) != 0) {
             ESP_LOGW(TAG, "pair/init parse failed"); vTaskDelay(pdMS_TO_TICKS(3000)); continue;
         }
         ESP_LOGI(TAG, "pairing code: %s", code);   // code is safe to log; token is not

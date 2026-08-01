@@ -15,7 +15,27 @@ typedef enum {
 
 typedef struct {
     esp_err_t (*init)(const void *cfg);
-    int       (*read)(int16_t *pcm, int samples);   // returns frames read
+    // Read up to `samples` mono 16-bit frames at 16 kHz into pcm.
+    //
+    // Returns the number of frames actually written (0 .. samples), or -1 on a
+    // driver/hardware error. A short read is normal and NOT an error — the
+    // caller (mic_task) treats anything other than a full frame as "try again",
+    // so 0 and -1 lead to the same place; the distinction exists so a genuine
+    // failure is still distinguishable in a log or a future caller. Returning 0
+    // for an error, as one driver used to, throws that away.
+    //
+    // Samples are converted from the mic's 32-bit left-justified I2S slots by
+    // the shared i2s_pcm_from_i2s32() (components/audio/i2s_pcm.c), so every
+    // driver saturates identically at the int16 bounds. The gain shift handed
+    // to it is per-driver on purpose (see i2s_pcm.h) — it is board tuning, not
+    // an implementation detail.
+    //
+    // Blocking behaviour is deliberately NOT part of this contract: a driver
+    // may block indefinitely until a full frame arrives (the dual-I2S path) or
+    // time out and return a short read (the single-I2S path). Callers must
+    // handle a short read either way and must not assume the call returns
+    // promptly.
+    int       (*read)(int16_t *pcm, int samples);
     // Discard whatever the RX DMA has already captured. Optional (may be NULL —
     // audio_mic_flush() checks). MUST only be called from the task that owns
     // the channel, i.e. the one that calls read(): it restarts the channel, and

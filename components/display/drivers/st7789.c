@@ -1,6 +1,7 @@
 #include "display.h"
 #include "display_st7789.h"
 #include "display_font.h"
+#include "display_try.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
@@ -79,10 +80,11 @@ static void clear_screen(void) {
     }
 }
 
-static void draw_char(int x, int y, char c) {
+// display_font_draw_centered callback: one esp_lcd bitmap transaction per
+// glyph, expanded to RGB565 on the stack.
+static void put_glyph(int x, int y, const uint8_t *glyph, void *ctx) {
+    (void)ctx;
     if (!s_ready) return;
-    const uint8_t *glyph = display_font_glyph(c);
-    if (!glyph) return;
     uint16_t px[DISPLAY_FONT_GLYPH_WIDTH * DISPLAY_FONT_GLYPH_HEIGHT];
     for (int row = 0; row < DISPLAY_FONT_GLYPH_HEIGHT; row++) {
         uint8_t bits = glyph[row];
@@ -95,26 +97,13 @@ static void draw_char(int x, int y, char c) {
                                y + DISPLAY_FONT_GLYPH_HEIGHT, px);
 }
 
-static void draw_line(const char *text, int y) {
-    int x = display_layout_line(text, DISP_WIDTH);
-    if (x < 0) return;  // too wide for the screen — skip rather than wrap
-    for (const char *p = text; *p; p++) {
-        draw_char(x, y, *p);
-        x += DISPLAY_FONT_GLYPH_WIDTH;
-    }
-}
-
 static esp_err_t st7789_init(const void *cfg_v) {
     const display_st7789_cfg_t *c = (const display_st7789_cfg_t *)cfg_v;
 
-    // Every failure below is non-fatal: log it and return the error so
-    // display_init()'s caller runs headless (see s_ready). This used to be
-    // ESP_ERROR_CHECK throughout, which aborts — so a panel that couldn't
-    // come up boot-looped the device instead of being skipped. Same macro
-    // and rationale as the ssd1306 driver's DISP_TRY.
-#define DISP_TRY(expr) do { esp_err_t _e = (expr); if (_e != ESP_OK) { \
-        ESP_LOGE(TAG, "display init: %s failed (%s) — running headless", #expr, esp_err_to_name(_e)); \
-        return _e; } } while (0)
+    // Every failure below is non-fatal (DISP_TRY): display_init()'s caller
+    // runs headless (see s_ready). This used to be ESP_ERROR_CHECK throughout,
+    // which aborts — so a panel that couldn't come up boot-looped the device
+    // instead of being skipped.
 
     // .bl < 0 means the panel's LED is hard-wired to 3V3 (both C3 boards).
     // Skip the GPIO entirely: `1ULL << -1` is undefined behaviour, and the
@@ -180,7 +169,6 @@ static esp_err_t st7789_init(const void *cfg_v) {
     DISP_TRY(esp_lcd_panel_set_gap(s_panel, 0, 0));
     DISP_TRY(esp_lcd_panel_invert_color(s_panel, true));
     DISP_TRY(esp_lcd_panel_disp_on_off(s_panel, true));
-#undef DISP_TRY
 
     s_ready = true;   // must precede clear_screen(): it draws through the guard
     clear_screen();
@@ -190,20 +178,14 @@ static esp_err_t st7789_init(const void *cfg_v) {
 
 static void st7789_show(const char *line1, const char *line2) {
     clear_screen();
-    if (line2 == NULL) {
-        draw_line(line1, (DISP_HEIGHT - DISPLAY_FONT_GLYPH_HEIGHT) / 2);
-    } else {
-        int gap = 4;
-        int total_h = 2 * DISPLAY_FONT_GLYPH_HEIGHT + gap;
-        int y1 = (DISP_HEIGHT - total_h) / 2;
-        int y2 = y1 + DISPLAY_FONT_GLYPH_HEIGHT + gap;
-        draw_line(line1, y1);
-        draw_line(line2, y2);
-    }
+    int y1, y2;
+    display_layout_lines(DISP_HEIGHT, line2 != NULL, &y1, &y2);
+    display_font_draw_centered(line1, y1, DISP_WIDTH, put_glyph, NULL);
+    if (line2) display_font_draw_centered(line2, y2, DISP_WIDTH, put_glyph, NULL);
 }
 
 // Raw pixel blit for images/animation. Not host-tested — same as
-// st7789_init/draw_char/clear_screen above, this only exercises real SPI
+// st7789_init/put_glyph/clear_screen above, this only exercises real SPI
 // hardware. esp_lcd_panel_draw_bitmap auto-chunks large transfers against
 // the bus's max_transfer_sz (see st7789_init), so arbitrary w*h is safe to
 // pass through directly, same as clear_screen's larger-than-max_transfer_sz

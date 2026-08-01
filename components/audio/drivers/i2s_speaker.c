@@ -1,36 +1,21 @@
 #include "i2s_speaker.h"
+#include "i2s_tx.h"
 #include "driver/i2s_std.h"
 #include "soc/soc_caps.h"
 #include "esp_log.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
 
 #if SOC_I2S_NUM > 1   // dedicated TX controller (dual-I2S SoCs, e.g. ESP32-S3)
 
 static const char *TAG = "i2s_speaker";
-static i2s_chan_handle_t s_tx;
-// Serializes the two speaker writers (spk_task + voice_play) so they don't
-// interleave on the TX channel or race on the static scratch buffer below.
-static SemaphoreHandle_t s_tx_mutex;
 
-// Software output volume (0..100). MAX98357A has no hardware volume, so
-// spk_write() scales samples by this before the I2S write.
-static volatile int s_volume = 80;
-#define SPK_SCRATCH 512
+// Volume, mutex and the scaled chunked write all live in i2s_tx (shared with
+// the single-I2S driver); this file owns only the channel bring-up.
+#define SPK_DEFAULT_VOLUME 80
+static i2s_tx_t s_tx;
 
-static void spk_set_volume(int pct) {
-    if (pct < 0) pct = 0;
-    if (pct > 100) pct = 100;
-    s_volume = pct;
-}
-static int spk_get_volume(void) { return s_volume; }
-static int spk_adjust_volume(int delta) {
-    int v = s_volume + delta;
-    if (v < 0) v = 0;
-    if (v > 100) v = 100;
-    s_volume = v;
-    return v;
-}
+static void spk_set_volume(int pct) { i2s_tx_set_volume(&s_tx, pct); }
+static int  spk_get_volume(void) { return i2s_tx_get_volume(&s_tx); }
+static int  spk_adjust_volume(int delta) { return i2s_tx_adjust_volume(&s_tx, delta); }
 
 static esp_err_t spk_init(const void *cfg_v) {
     const i2s_speaker_cfg_t *c = (const i2s_speaker_cfg_t *)cfg_v;
@@ -42,7 +27,8 @@ static esp_err_t spk_init(const void *cfg_v) {
     // queue deep enough to hold a whole sentence burst (DL_QUEUE_DEPTH) so frames
     // aren't dropped mid-sentence. Same idea as the C3 i2s_fd driver.
     tx_cc.auto_clear = true;
-    ESP_ERROR_CHECK(i2s_new_channel(&tx_cc, &s_tx, NULL));
+    i2s_chan_handle_t chan;
+    ESP_ERROR_CHECK(i2s_new_channel(&tx_cc, &chan, NULL));
     i2s_std_config_t tx_std = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(16000),
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
@@ -52,56 +38,20 @@ static esp_err_t spk_init(const void *cfg_v) {
             .ws = c->lrc, .dout = c->din, .din = I2S_GPIO_UNUSED,
         },
     };
-    ESP_ERROR_CHECK(i2s_channel_init_std_mode(s_tx, &tx_std));
-    ESP_ERROR_CHECK(i2s_channel_enable(s_tx));
+    ESP_ERROR_CHECK(i2s_channel_init_std_mode(chan, &tx_std));
+    ESP_ERROR_CHECK(i2s_channel_enable(chan));
 
-    s_tx_mutex = xSemaphoreCreateMutex();
-    if (!s_tx_mutex) { ESP_LOGE(TAG, "mutex create failed"); return ESP_FAIL; }
+    esp_err_t err = i2s_tx_init(&s_tx, chan, SPK_DEFAULT_VOLUME);
+    if (err != ESP_OK) return err;
     ESP_LOGI(TAG, "speaker ready");
     return ESP_OK;
 }
 
 static int spk_write(const int16_t *pcm, int samples) {
-    int vol = s_volume;
-    size_t total_written = 0;
-    esp_err_t err = ESP_OK;
-    xSemaphoreTake(s_tx_mutex, portMAX_DELAY);
-    if (vol >= 100) {
-        err = i2s_channel_write(s_tx, pcm, samples * sizeof(int16_t),
-                                &total_written, portMAX_DELAY);
-    } else {
-        static int16_t scratch[SPK_SCRATCH];
-        // Q8 gain instead of a per-sample divide by 100: at 16kHz this loop runs
-        // 960 times per frame, and the shift is free where the divide is not.
-        // Rounding differs by at most 1 LSB (arithmetic shift floors, integer
-        // division truncates toward zero) — inaudible at any volume.
-        int gain_q8 = (vol * 256 + 50) / 100;
-        int off = 0;
-        while (off < samples) {
-            int chunk = samples - off;
-            if (chunk > SPK_SCRATCH) chunk = SPK_SCRATCH;
-            for (int i = 0; i < chunk; i++)
-                scratch[i] = (int16_t)(((int32_t)pcm[off + i] * gain_q8) >> 8);
-            size_t bw = 0;
-            err = i2s_channel_write(s_tx, scratch, chunk * sizeof(int16_t),
-                                    &bw, portMAX_DELAY);
-            total_written += bw;
-            if (err != ESP_OK) break;
-            off += chunk;
-        }
-    }
-    xSemaphoreGive(s_tx_mutex);
-    if (err != ESP_OK) return -1;
-    return (int)(total_written / sizeof(int16_t));
+    return i2s_tx_write(&s_tx, pcm, samples);
 }
 
-static void spk_reset(void) {
-    xSemaphoreTake(s_tx_mutex, portMAX_DELAY);
-    // Disable+re-enable the TX channel to discard queued DMA (barge-in).
-    i2s_channel_disable(s_tx);
-    i2s_channel_enable(s_tx);
-    xSemaphoreGive(s_tx_mutex);
-}
+static void spk_reset(void) { i2s_tx_reset(&s_tx); }
 
 const speaker_ops_t i2s_speaker_ops = {
     .init = spk_init, .write = spk_write, .reset = spk_reset,

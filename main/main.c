@@ -290,6 +290,57 @@ typedef struct {
 } status_msg_t;
 static QueueHandle_t s_status_q;
 
+// Seconds since boot, the unit s_last_activity_s / s_idle_timeout_s work in
+// (see s_last_activity_s for why seconds and not the raw microsecond counter).
+static inline uint32_t now_s(void) {
+    return (uint32_t)(esp_timer_get_time() / 1000000);
+}
+
+// The one way to put something on screen. Every caller used to hand-roll the
+// same four lines — a designated-initializer literal, one or two strncpy's, and
+// an xQueueSend — thirteen times over, and the copies had already drifted: one
+// forgot .show_idle_eyes (killing the idle animation whenever the volume was
+// adjusted), and the two that copy server text had to grow their own bounded
+// memcpy to keep the riscv build's -Werror=stringop-truncation quiet. Doing it
+// in one place makes both problems structural rather than a review item.
+//
+// line2 == NULL means a one-line message (has_line2 stays false). Both lines
+// are truncated to the fields' own widths; snprintf is used rather than strncpy
+// precisely because it always terminates and never trips that C3 warning, so
+// callers can pass a 256-byte `ev->text` straight in.
+//
+// `emotion` is only read when idle_eyes is true (see status_msg_t) — pass
+// ROBOT_EMOTION_NEUTRAL for the plain text screens.
+static void status_push(bool idle_eyes, robot_emotion_t emotion,
+                        const char *line1, const char *line2) {
+    status_msg_t m = {
+        .play_voice = false,
+        .has_line2 = line2 != NULL,
+        .show_idle_eyes = idle_eyes,
+        .emotion = emotion,
+    };
+    snprintf(m.line1, sizeof m.line1, "%s", line1);
+    if (line2) snprintf(m.line2, sizeof m.line2, "%s", line2);
+    xQueueSend(s_status_q, &m, 0);
+}
+
+// As status_push, plus a local voice clip played by status_task before it
+// returns to the queue. Only the session-ready chime uses this today; kept
+// separate so the common path doesn't carry an unused clip argument.
+static void status_push_with_voice(voice_clip_t clip, robot_emotion_t emotion,
+                                   const char *line1, const char *line2) {
+    status_msg_t m = {
+        .play_voice = true,
+        .voice = clip,
+        .has_line2 = line2 != NULL,
+        .show_idle_eyes = true,
+        .emotion = emotion,
+    };
+    snprintf(m.line1, sizeof m.line1, "%s", line1);
+    if (line2) snprintf(m.line2, sizeof m.line2, "%s", line2);
+    xQueueSend(s_status_q, &m, 0);
+}
+
 #if CONFIG_AA_MIC_METER
 // TEMP mic meter (bring-up, local — do not commit): mic_task publishes its last
 // read's sample count + peak amplitude; mic_meter_task shows them on the OLED so
@@ -298,10 +349,9 @@ static volatile int s_mic_peak, s_mic_got;
 static void mic_meter_task(void *arg) {
     (void)arg;
     for (;;) {
-        status_msg_t m = { .has_line2 = true };
-        strncpy(m.line1, "Mic level", sizeof(m.line1) - 1);
-        snprintf(m.line2, sizeof(m.line2), "g %d p %d", s_mic_got, s_mic_peak);
-        if (s_status_q) xQueueSend(s_status_q, &m, 0);
+        char level[32];
+        snprintf(level, sizeof level, "g %d p %d", s_mic_got, s_mic_peak);
+        if (s_status_q) status_push(false, ROBOT_EMOTION_NEUTRAL, "Mic level", level);
         vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
@@ -578,11 +628,7 @@ static void status_task(void *arg) {
 // — omitted it, silently killing the idle animation the moment volume was
 // adjusted while idle).
 static void send_idle_status(const char *line1) {
-    status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true,
-                        .emotion = ROBOT_EMOTION_SLEEPY };
-    strncpy(m.line1, line1, sizeof(m.line1) - 1);
-    strncpy(m.line2, "Press wake to talk", sizeof(m.line2) - 1);
-    xQueueSend(s_status_q, &m, 0);
+    status_push(true, ROBOT_EMOTION_SLEEPY, line1, "Press wake to talk");
 }
 
 // Common "now listening" HUD update (SURPRISED eyes + "Speak now"), shared by
@@ -591,11 +637,7 @@ static void send_idle_status(const char *line1) {
 // dedup rationale as send_idle_status above — a hand-rolled copy of this
 // block existed at all five sites and only needed to drift once to bug out.
 static void send_listening_status(void) {
-    status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true,
-                        .emotion = ROBOT_EMOTION_SURPRISED };
-    strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
-    strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
-    xQueueSend(s_status_q, &m, 0);
+    status_push(true, ROBOT_EMOTION_SURPRISED, "Listening", "Speak now");
 }
 
 // mcp_tools' self.screen.show_text callback (registered via
@@ -610,11 +652,7 @@ static void send_listening_status(void) {
 // screen, i.e. exactly what the tool's description promises; the next status
 // message (TTS_START, a button, ...) replaces it as usual.
 static void show_mcp_text(const char *line1, const char *line2) {
-    status_msg_t m = { .play_voice = false, .has_line2 = line2 != NULL,
-                        .show_idle_eyes = false };
-    strncpy(m.line1, line1, sizeof(m.line1) - 1);
-    if (line2) strncpy(m.line2, line2, sizeof(m.line2) - 1);
-    xQueueSend(s_status_q, &m, 0);
+    status_push(false, ROBOT_EMOTION_NEUTRAL, line1, line2);
 }
 
 // aa_run_pairing's show callback. Routed through s_status_q rather than a
@@ -623,10 +661,23 @@ static void show_mcp_text(const char *line1, const char *line2) {
 // later from idle_watchdog_task after a revoke), so it must obey the same
 // "only status_task touches the panel" rule as everything else here.
 static void show_pair_code(const char *code) {
-    status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = false };
-    strncpy(m.line1, "Pair code", sizeof(m.line1) - 1);
-    strncpy(m.line2, code, sizeof(m.line2) - 1);
-    xQueueSend(s_status_q, &m, 0);
+    status_push(false, ROBOT_EMOTION_NEUTRAL, "Pair code", code);
+}
+
+// Mute the mic, stop auto-reconnect (the socket stays closed until the next
+// wake) and re-enable modem power-save. The shared prefix of EVERY path that
+// ends a conversation — the Wake button toggling off, the MCP idle tool, the
+// server's goodbye, the device-side idle watchdog, and do_repair. Each of
+// those hand-rolled these three lines, and they had already drifted: two of
+// them forgot to refresh s_last_activity_s.
+//
+// Deliberately does not touch the screen: callers differ there (idle screen,
+// "Unpaired", or nothing at all while a repair is pending).
+static void sleep_link(void) {
+    s_active = false;
+    ws_client_set_reconnect(false);
+    wifi_sta_set_perf_mode(false);
+    s_last_activity_s = now_s();
 }
 
 // Resolves the token ws_client_start() connects with:
@@ -672,13 +723,8 @@ static const char *resolve_device_token(void) {
 // resolve_device_token() (called again next boot) looks for it.
 static void do_repair(const char *why) {
     ESP_LOGW(TAG, "device token invalid (%s) -- clearing and re-pairing", why);
-    s_active = false;
-    ws_client_set_reconnect(false);
-    wifi_sta_set_perf_mode(false);
-    status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = false };
-    strncpy(m.line1, "Unpaired", sizeof(m.line1) - 1);
-    strncpy(m.line2, "re-pairing", sizeof(m.line2) - 1);
-    xQueueSend(s_status_q, &m, 0);
+    sleep_link();
+    status_push(false, ROBOT_EMOTION_NEUTRAL, "Unpaired", "re-pairing");
     aa_clear_device_token();
     resolve_device_token();   // blocks until claimed; show_pair_code shows the fresh code
     esp_restart();
@@ -689,11 +735,20 @@ static void do_repair(const char *why) {
 // self.device.idle tool (registered via mcp_tools_set_idle_hook below) so a
 // voice "go to sleep" request drives the same real transition as the button.
 static void go_idle(void) {
-    s_active = false;
-    ws_client_set_reconnect(false);
-    wifi_sta_set_perf_mode(false);   // re-enable modem power-save while idle
-    s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
+    sleep_link();
     send_idle_status("Idle");
+}
+
+// The mirror image of go_idle: re-enable the link (it may be asleep after an
+// idle goodbye), unmute the mic, and drop modem power-save for a steadier
+// audio RTT while conversing. Shared by the Wake button and the boot-time
+// CONFIG_AA_AUTO_WAKE path, which carried a verbatim copy of these five lines.
+static void go_active(void) {
+    s_active = true;
+    ws_client_set_reconnect(true);
+    wifi_sta_set_perf_mode(true);
+    s_last_activity_s = now_s();
+    send_listening_status();
 }
 
 // Voice-driven "let's start over": ask the gateway to end this conversation and
@@ -716,9 +771,9 @@ static void start_new_conversation(void) {
 // mcp_tools_set_volume_hook below) so a voice-driven volume change gets the
 // same on-screen feedback as a physical button press.
 static void show_volume_overlay(int v) {
-    status_msg_t m = { .play_voice = false, .has_line2 = false, .show_idle_eyes = true };
-    snprintf(m.line1, sizeof(m.line1), "Volume %d%%", v);
-    xQueueSend(s_status_q, &m, 0);
+    char line[32];
+    snprintf(line, sizeof line, "Volume %d%%", v);
+    status_push(true, ROBOT_EMOTION_NEUTRAL, line, NULL);
     // (Re)arm the revert timer so repeated changes keep pushing it out — the
     // overlay only reverts 0.5s after the LAST change, not the first.
     esp_timer_stop(s_volume_revert_timer);  // no-op (ESP_ERR_INVALID_STATE) if not running
@@ -733,10 +788,7 @@ static void show_volume_overlay(int v) {
 static void volume_revert_cb(void *arg) {
     (void)arg;
     if (s_state == APP_SPEAKING) {
-        status_msg_t m = { .play_voice = false, .has_line2 = false, .show_idle_eyes = true,
-                            .emotion = ROBOT_EMOTION_HAPPY };
-        strncpy(m.line1, "Speaking", sizeof(m.line1) - 1);
-        xQueueSend(s_status_q, &m, 0);
+        status_push(true, ROBOT_EMOTION_HAPPY, "Speaking", NULL);
     } else if (s_active) {
         send_listening_status();
     } else {
@@ -764,22 +816,14 @@ static void on_button(button_id_t id) {
             // is still playing the bot until spk_task services s_barge_in, and
             // the mic is already open (state is LISTENING as of the line above).
             s_mic_flush_req = true;
-            s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
+            s_last_activity_s = now_s();
             ws_client_send_abort("user");
             send_listening_status();
             break;
         }
         // Not speaking: toggle idle/listening. Waking re-enables the link (it may
         // be asleep after an idle goodbye); going idle puts it back to sleep.
-        if (s_active) {
-            go_idle();
-        } else {
-            s_active = true;
-            ws_client_set_reconnect(true);
-            wifi_sta_set_perf_mode(true);   // steadier audio RTT while conversing
-            s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
-            send_listening_status();
-        }
+        if (s_active) go_idle(); else go_active();
         break;
     }
     case BTN_VOL_UP:
@@ -800,17 +844,14 @@ static void on_button(button_id_t id) {
         robot_emotion_t e = (robot_emotion_t)(esp_random() % ROBOT_EMOTION_COUNT);
         if (e == s_last) e = (robot_emotion_t)((e + 1) % ROBOT_EMOTION_COUNT);
         s_last = e;
-        status_msg_t m = { .play_voice = false, .has_line2 = false,
-                            .show_idle_eyes = true, .emotion = e };
-        strncpy(m.line1, robot_eyes_emotion_name(e), sizeof(m.line1) - 1);
-        xQueueSend(s_status_q, &m, 0);
+        status_push(true, e, robot_eyes_emotion_name(e), NULL);
         break;
     }
     }
 }
 
 static void on_event(const lugo_event_t *ev) {
-    s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);  // any server event = activity
+    s_last_activity_s = now_s();   // any server event = activity
     switch (ev->type) {
     case LUGO_EV_WELCOME: {
         // New session starting: any goodbye reason left over from a prior
@@ -824,20 +865,15 @@ static void on_event(const lugo_event_t *ev) {
         // Chime only the first time; reconnect-welcomes (e.g. after an idle
         // goodbye) update the screen silently so an unattended device doesn't
         // chime on a loop. (Full sleep-until-wake is Phase 2 / MQTT.)
-        status_msg_t m = { .play_voice = !s_welcomed_once, .voice = VOICE_CONNECTED,
-                            .has_line2 = true, .show_idle_eyes = true };
+        bool chime = !s_welcomed_once;
         s_welcomed_once = true;
         // If this welcome is a wake-triggered reconnect (user already active),
         // show Listening so the screen doesn't misleadingly say "Press wake".
-        if (s_active) {
-            m.emotion = ROBOT_EMOTION_SURPRISED;
-            strncpy(m.line1, "Listening", sizeof(m.line1) - 1);
-            strncpy(m.line2, "Speak now", sizeof(m.line2) - 1);
-        } else {
-            strncpy(m.line1, "Connected", sizeof(m.line1) - 1);
-            strncpy(m.line2, "Press wake to talk", sizeof(m.line2) - 1);
-        }
-        xQueueSend(s_status_q, &m, 0);
+        robot_emotion_t emotion = s_active ? ROBOT_EMOTION_SURPRISED : ROBOT_EMOTION_NEUTRAL;
+        const char *l1 = s_active ? "Listening" : "Connected";
+        const char *l2 = s_active ? "Speak now" : "Press wake to talk";
+        if (chime) status_push_with_voice(VOICE_CONNECTED, emotion, l1, l2);
+        else       status_push(true, emotion, l1, l2);
         break;
     }
     case LUGO_EV_STT: {
@@ -856,26 +892,17 @@ static void on_event(const lugo_event_t *ev) {
         // TTS_STOP, GOODBYE, ERROR, the Wake button) already pushes its own
         // status message, so there is no way to get stuck on it and no timeout
         // to maintain.
-        status_msg_t m = { .play_voice = false, .has_line2 = true, .show_idle_eyes = true,
-                            .emotion = ROBOT_EMOTION_PONDERING };
-        strncpy(m.line1, "Thinking", sizeof(m.line1) - 1);
-        // ev->text (256B) is wider than line2 — same bounded truncation the
-        // ERROR case below uses, which keeps GCC's -Werror=stringop-truncation
-        // quiet on the riscv (C3) build.
-        size_t tlen = strnlen(ev->text, sizeof(m.line2) - 1);
-        memcpy(m.line2, ev->text, tlen);
-        m.line2[tlen] = '\0';
-        xQueueSend(s_status_q, &m, 0);
+        // ev->text (256B) is wider than status_msg_t.line2; status_push
+        // truncates it safely (snprintf), which is also what keeps GCC's
+        // -Werror=stringop-truncation quiet on the riscv (C3) build.
+        status_push(true, ROBOT_EMOTION_PONDERING, "Thinking", ev->text);
         break;
     }
     case LUGO_EV_TTS_SENTENCE: ESP_LOGI(TAG, "bot: %s", ev->text); break;
     case LUGO_EV_TTS_START: {
         s_turn_ending = false;
         s_state = APP_SPEAKING;
-        status_msg_t m = { .play_voice = false, .has_line2 = false, .show_idle_eyes = true,
-                            .emotion = ROBOT_EMOTION_HAPPY };
-        strncpy(m.line1, "Speaking", sizeof(m.line1) - 1);
-        xQueueSend(s_status_q, &m, 0);
+        status_push(true, ROBOT_EMOTION_HAPPY, "Speaking", NULL);
         break;
     }
     case LUGO_EV_TTS_STOP:
@@ -897,12 +924,11 @@ static void on_event(const lugo_event_t *ev) {
         s_last_goodbye_reason[sizeof(s_last_goodbye_reason) - 1] = '\0';
         // Server idle disconnect. Sleep: stop auto-reconnect so we don't
         // reconnect-storm every idle_timeout; the socket stays closed until the
-        // user presses Wake. Go idle (mic muted).
-        s_active = false;
+        // user presses Wake. Go idle (mic muted) — but not go_idle(), because
+        // the idle screen must wait until we know this isn't a revoke.
+        sleep_link();
         s_turn_ending = false;
         s_state = APP_LISTENING;
-        ws_client_set_reconnect(false);
-        wifi_sta_set_perf_mode(false);
         // Ask spk_task to flush the downlink buffer + reset I2S/opus, rather
         // than doing it here: this callback runs on the ws client's task and
         // spk_task may be inside opus_decode()/i2s_channel_write() right now
@@ -926,15 +952,9 @@ static void on_event(const lugo_event_t *ev) {
     }
     case LUGO_EV_ERROR: {
         ESP_LOGE(TAG, "server error: %s", ev->text);
-        status_msg_t m = { .play_voice = false, .has_line2 = true };
-        strncpy(m.line1, "Error", sizeof(m.line1) - 1);
-        // ev->text (256B) is wider than line2, so we intentionally truncate to
-        // the display line. Bounded memcpy + explicit NUL keeps it safe and
-        // avoids the riscv GCC -Werror=stringop/format-truncation on the C3 build.
-        size_t elen = strnlen(ev->text, sizeof(m.line2) - 1);
-        memcpy(m.line2, ev->text, elen);
-        m.line2[elen] = '\0';
-        xQueueSend(s_status_q, &m, 0);
+        // ev->text (256B) is wider than line2: status_push truncates it to the
+        // display line (see the STT case above for the -Werror note).
+        status_push(false, ROBOT_EMOTION_NEUTRAL, "Error", ev->text);
         break;
     }
     case LUGO_EV_MCP: {
@@ -952,7 +972,7 @@ static void on_event(const lugo_event_t *ev) {
 }
 
 static void on_audio(const uint8_t *data, int len) {
-    s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
+    s_last_activity_s = now_s();
     if (len <= 0) return;
     if (len > AA_PKT_MAX) {
         // Louder than a silent drop: a frame this big means the gateway's
@@ -1162,13 +1182,8 @@ static void idle_watchdog_task(void *arg) {
 
         int to = s_idle_timeout_s;
         if (!s_active || to <= 0) continue;
-        uint32_t idle_s = (uint32_t)(esp_timer_get_time() / 1000000) - s_last_activity_s;
-        if (idle_s >= (uint32_t)(to + 5)) {
-            s_active = false;
-            ws_client_set_reconnect(false);   // sleep the link too
-            wifi_sta_set_perf_mode(false);
-            send_idle_status("Idle");
-        }
+        uint32_t idle_s = now_s() - s_last_activity_s;
+        if (idle_s >= (uint32_t)(to + 5)) go_idle();
     }
 }
 
@@ -1323,7 +1338,7 @@ void app_main(void) {
     // claimed; status_task is already running by this point so
     // show_pair_code's queue-based update is safe).
     const char *device_token = resolve_device_token();
-    s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
+    s_last_activity_s = now_s();
     ESP_ERROR_CHECK(ws_client_start(
         s_cfg.server_host, s_cfg.server_port, CONFIG_AA_SERVER_SECURE,
         device_token, 16000, 16000, 60, on_event, on_audio));
@@ -1381,12 +1396,8 @@ void app_main(void) {
     ESP_LOGI(TAG, "mic meter mode (CONFIG_AA_MIC_METER)");
 #elif CONFIG_AA_AUTO_WAKE
     // Dev: connect to the gateway at boot without a physical Wake button —
-    // mirrors the BTN_WAKE (not-active) path. Remove for production.
-    s_active = true;
-    ws_client_set_reconnect(true);
-    wifi_sta_set_perf_mode(true);
-    s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
-    send_listening_status();
+    // literally the BTN_WAKE (not-active) path. Remove for production.
+    go_active();
     ESP_LOGI(TAG, "auto-wake: connecting to gateway (CONFIG_AA_AUTO_WAKE)");
 #else
     send_idle_status("Ready");

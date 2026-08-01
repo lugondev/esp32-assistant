@@ -131,18 +131,6 @@ static void test_render_saved_too_small(void) {
 
 // --- scan list ------------------------------------------------------------
 
-static void test_signal_bars_buckets(void) {
-    CHECK(provisioning_signal_bars(-30) == 4);
-    CHECK(provisioning_signal_bars(-55) == 4);
-    CHECK(provisioning_signal_bars(-56) == 3);
-    CHECK(provisioning_signal_bars(-65) == 3);
-    CHECK(provisioning_signal_bars(-66) == 2);
-    CHECK(provisioning_signal_bars(-75) == 2);
-    // A scan result is reachable by definition, so the floor is 1, never 0 —
-    // a 0-bar row would render as an entirely empty indicator.
-    CHECK(provisioning_signal_bars(-95) == 1);
-}
-
 static prov_network_t mknet(const char *ssid, int rssi, bool secure) {
     prov_network_t n = {0};
     snprintf(n.ssid, sizeof n.ssid, "%s", ssid);
@@ -284,7 +272,6 @@ int main(void) {
     test_render_form_too_small();
     test_render_saved();
     test_render_saved_too_small();
-    test_signal_bars_buckets();
     test_sort_orders_strongest_first();
     test_sort_dedups_keeping_strongest();
     test_sort_drops_hidden_ssids();

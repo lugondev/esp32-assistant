@@ -1,21 +1,30 @@
 #include "i2s_fd.h"
+#include "i2s_pcm.h"
+#include "i2s_tx.h"
 #include "driver/i2s_std.h"
 #include "soc/soc_caps.h"
 #include "esp_log.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
 
 #if SOC_I2S_NUM == 1   // single-I2S SoCs (e.g. ESP32-C3): mic + speaker as two
                        // independent simplex channels on the one controller.
 
 static const char *TAG = "i2s_fd";
-static i2s_chan_handle_t s_rx, s_tx;
-static SemaphoreHandle_t s_tx_mutex;
-static volatile int s_volume = 80;
+static i2s_chan_handle_t s_rx;
+// Volume, mutex and the scaled chunked write live in i2s_tx, shared with the
+// dual-I2S driver; this file owns the RX side and the channel bring-up.
+static i2s_tx_t s_tx;
 static bool s_ready;   // guards init (both mic->init and speaker->init call it)
 
 #define FD_MIC_MAX_SAMPLES 960
-#define FD_SPK_SCRATCH 512
+#define FD_SPK_DEFAULT_VOLUME 80
+
+// Board gain for the mic's 32-bit left-justified slot (see i2s_pcm.h). 12 is
+// what the C3 boards were brought up and validated at (xiaozhi uses the same
+// value on this wiring); the dual-I2S S3 driver declares 11, i.e. 6 dB louder.
+// Whether the two SHOULD converge is a hardware-tuning question — the point of
+// naming it here is that the difference is now a visible, deliberate per-board
+// constant instead of a divergence hidden in two copy-pasted loops.
+#define FD_MIC_GAIN_SHIFT 12
 
 // Allocate both channels once. Idempotent: mic->init and speaker->init both
 // call it; init order does not matter.
@@ -41,7 +50,8 @@ static esp_err_t fd_ensure_init(const void *cfg_v) {
     cc.dma_desc_num = 8;
 
     // TX (MAX98357A speaker) on its own bclk/ws.
-    ESP_ERROR_CHECK(i2s_new_channel(&cc, &s_tx, NULL));
+    i2s_chan_handle_t tx_chan;
+    ESP_ERROR_CHECK(i2s_new_channel(&cc, &tx_chan, NULL));
     i2s_std_config_t tx_std = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(16000),
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
@@ -49,8 +59,8 @@ static esp_err_t fd_ensure_init(const void *cfg_v) {
         .gpio_cfg = { .mclk = I2S_GPIO_UNUSED, .bclk = c->bclk, .ws = c->ws,
                       .dout = c->spk_data, .din = I2S_GPIO_UNUSED },
     };
-    ESP_ERROR_CHECK(i2s_channel_init_std_mode(s_tx, &tx_std));
-    ESP_ERROR_CHECK(i2s_channel_enable(s_tx));
+    ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_chan, &tx_std));
+    ESP_ERROR_CHECK(i2s_channel_enable(tx_chan));
 
     // RX (INMP441 mic) on ITS OWN bclk/ws (mic_bclk/mic_ws) — separate pins,
     // and its own 32-bit slot width (see above). The slot macro expands to a
@@ -69,8 +79,8 @@ static esp_err_t fd_ensure_init(const void *cfg_v) {
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(s_rx, &rx_std));
     ESP_ERROR_CHECK(i2s_channel_enable(s_rx));
 
-    s_tx_mutex = xSemaphoreCreateMutex();
-    if (!s_tx_mutex) { ESP_LOGE(TAG, "mutex create failed"); return ESP_FAIL; }
+    esp_err_t err = i2s_tx_init(&s_tx, tx_chan, FD_SPK_DEFAULT_VOLUME);
+    if (err != ESP_OK) return err;
     s_ready = true;
     ESP_LOGI(TAG, "i2s simplex ready (tx=%d/%d rx=%d/%d)", c->bclk, c->ws, c->mic_bclk, c->mic_ws);
     return ESP_OK;
@@ -83,63 +93,28 @@ static int fd_mic_read(int16_t *pcm, int samples) {
     if (samples > FD_MIC_MAX_SAMPLES) samples = FD_MIC_MAX_SAMPLES;
     static int32_t raw[FD_MIC_MAX_SAMPLES];   // MONO: one 32-bit slot per sample
     size_t br = 0;
+    // Bounded wait, unlike the dual-I2S driver's portMAX_DELAY: the RX channel
+    // here shares its controller with TX, so a stall must not park mic_task
+    // forever. A timeout surfaces as a short read, which the mic_ops_t contract
+    // explicitly permits.
     if (i2s_channel_read(s_rx, raw, samples * sizeof(int32_t), &br, pdMS_TO_TICKS(200)) != ESP_OK)
-        return 0;
+        return -1;   // per mic_ops_t: -1 is an error, 0 is a legitimate empty read
     int frames = (int)(br / sizeof(int32_t));
-    for (int i = 0; i < frames; i++) {            // 32-bit -> 16-bit, clamp (xiaozhi >>12)
-        int32_t v = raw[i] >> 12;
-        if (v > 32767) v = 32767; else if (v < -32767) v = -32767;
-        pcm[i] = (int16_t)v;
-    }
+    i2s_pcm_from_i2s32(raw, frames, FD_MIC_GAIN_SHIFT, pcm);
     return frames;
 }
 
-static void fd_set_volume(int pct) { if (pct < 0) pct = 0; if (pct > 100) pct = 100; s_volume = pct; }
-static int  fd_get_volume(void) { return s_volume; }
-static int  fd_adjust_volume(int d) { int v = s_volume + d; if (v < 0) v = 0; if (v > 100) v = 100; s_volume = v; return v; }
+static void fd_set_volume(int pct) { i2s_tx_set_volume(&s_tx, pct); }
+static int  fd_get_volume(void) { return i2s_tx_get_volume(&s_tx); }
+static int  fd_adjust_volume(int d) { return i2s_tx_adjust_volume(&s_tx, d); }
 
+// 16-bit MONO, matching the TX slot_cfg: the PCM goes to the MAX98357A as-is,
+// with no repack into 32-bit slots (see fd_ensure_init).
 static int fd_spk_write(const int16_t *pcm, int samples) {
-    // 16-bit MONO, matching the TX slot_cfg: the PCM goes to the MAX98357A as-is,
-    // no repack into 32-bit slots (see fd_ensure_init). At full volume there is
-    // nothing to do at all, so hand the caller's buffer straight to the DMA.
-    int vol = s_volume;
-    size_t written = 0;
-    esp_err_t err = ESP_OK;
-    xSemaphoreTake(s_tx_mutex, portMAX_DELAY);
-    if (vol >= 100) {
-        size_t bw = 0;
-        err = i2s_channel_write(s_tx, pcm, samples * sizeof(int16_t), &bw, portMAX_DELAY);
-        written = bw / sizeof(int16_t);
-    } else {
-        static int16_t frame[FD_SPK_SCRATCH];
-        // Q8 gain, not a per-sample divide by 100 — same reasoning as the S3
-        // i2s_speaker driver: 960 samples per frame, and the C3 has the least
-        // CPU headroom of the two targets.
-        int gain_q8 = (vol * 256 + 50) / 100;
-        int off = 0;
-        while (off < samples) {
-            int chunk = samples - off;
-            if (chunk > FD_SPK_SCRATCH) chunk = FD_SPK_SCRATCH;
-            for (int i = 0; i < chunk; i++)
-                frame[i] = (int16_t)(((int32_t)pcm[off + i] * gain_q8) >> 8);
-            size_t bw = 0;
-            err = i2s_channel_write(s_tx, frame, chunk * sizeof(int16_t), &bw, portMAX_DELAY);
-            written += bw / sizeof(int16_t);
-            if (err != ESP_OK) break;
-            off += chunk;
-        }
-    }
-    xSemaphoreGive(s_tx_mutex);
-    if (err != ESP_OK) return -1;
-    return (int)written;   // samples written
+    return i2s_tx_write(&s_tx, pcm, samples);
 }
 
-static void fd_spk_reset(void) {
-    xSemaphoreTake(s_tx_mutex, portMAX_DELAY);
-    i2s_channel_disable(s_tx);
-    i2s_channel_enable(s_tx);
-    xSemaphoreGive(s_tx_mutex);
-}
+static void fd_spk_reset(void) { i2s_tx_reset(&s_tx); }
 
 // Restart the RX channel to throw away everything the DMA has captured so far.
 // Callable ONLY from the task that calls fd_mic_read (see mic_ops_t.flush).

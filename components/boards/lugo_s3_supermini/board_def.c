@@ -1,8 +1,6 @@
-#include "board.h"
+#include "board_common.h"
 #include "i2s_mic.h"
 #include "i2s_speaker.h"
-#include "display_auto.h"
-#include "buttons_gpio.h"
 #include "sdkconfig.h"
 
 #if CONFIG_IDF_TARGET_ESP32S3
@@ -30,14 +28,7 @@ static const i2s_speaker_cfg_t spk_cfg = {
 #define PIN_BTN_VOL_UP   40
 #define PIN_BTN_VOL_DOWN 39
 
-static const display_ssd1306_cfg_t ssd1306_cfg = {
-    .scl = PIN_DISP_CLK, .sda = PIN_DISP_DAT, .i2c_addr = 0x3C,
-};
-static const display_st7789_cfg_t  st7789_cfg  = {
-    .sclk = PIN_DISP_CLK, .mosi = PIN_DISP_DAT,
-    .dc = PIN_DISP_DC, .rst = PIN_DISP_RST, .bl = PIN_DISP_BL,
-};
-static const display_auto_cfg_t    display_cfg = { .ssd1306 = &ssd1306_cfg, .st7789 = &st7789_cfg };
+LUGO_DISPLAY_AUTO(PIN_DISP_CLK, PIN_DISP_DAT, PIN_DISP_DC, PIN_DISP_RST, PIN_DISP_BL);
 static const buttons_gpio_cfg_t buttons_cfg = {
     .wake = PIN_BTN_WAKE, .vol_up = PIN_BTN_VOL_UP,
     .vol_down = PIN_BTN_VOL_DOWN, .emotion = -1,
@@ -45,10 +36,9 @@ static const buttons_gpio_cfg_t buttons_cfg = {
 
 // Display + buttons (see board_t.reserved_pins). Mic/speaker I2S pins are
 // omitted on purpose — the I2S driver reserves those itself.
-static const int reserved_pins[] = {
-    PIN_DISP_CLK, PIN_DISP_DAT, PIN_DISP_DC, PIN_DISP_RST, PIN_DISP_BL,
-    PIN_BTN_WAKE, PIN_BTN_VOL_UP, PIN_BTN_VOL_DOWN,
-};
+LUGO_RESERVED_PINS(PIN_DISP_CLK, PIN_DISP_DAT, PIN_DISP_DC, PIN_DISP_RST,
+                   PIN_DISP_BL, PIN_BTN_WAKE, PIN_BTN_VOL_UP,
+                   PIN_BTN_VOL_DOWN);
 
 static bool match(void) { return false; }  // opt-in via CONFIG_AA_BOARD_LUGO_S3_SUPERMINI
 
@@ -62,8 +52,7 @@ LUGO_BOARD_REGISTER(board_lugo_s3_supermini) {
     .speaker_cfg = &spk_cfg,
     .display_cfg = &display_cfg,
     .buttons_cfg = &buttons_cfg,
-    .reserved_pins   = reserved_pins,
-    .n_reserved_pins = (int)(sizeof(reserved_pins) / sizeof(reserved_pins[0])),
+    LUGO_BOARD_RESERVED_PINS,
     .match       = match,
 };
 

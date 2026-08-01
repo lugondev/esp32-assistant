@@ -1,11 +1,27 @@
 #include "statusbar.h"
 #include "display_font.h"
+#include "wifi_signal.h"
 #include <stdio.h>
 
 static int failures = 0;
 #define CHECK(cond) do { if (!(cond)) { \
   printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); failures++; } } while (0)
 
+// The shared ladder both the HUD and the setup portal read from. Never 0:
+// a reading exists means the link exists (see wifi_signal.h).
+static void test_signal_bars_ladder(void) {
+    CHECK(wifi_signal_bars(-30) == 4);
+    CHECK(wifi_signal_bars(-55) == 4);
+    CHECK(wifi_signal_bars(-56) == 3);
+    CHECK(wifi_signal_bars(-65) == 3);
+    CHECK(wifi_signal_bars(-66) == 2);
+    CHECK(wifi_signal_bars(-75) == 2);
+    CHECK(wifi_signal_bars(-76) == 1);
+    CHECK(wifi_signal_bars(-95) == 1);
+}
+
+// The status bar's own contribution on top of that ladder: a disconnected
+// radio shows no bars at all, whatever stale RSSI is lying around.
 static void test_wifi_bars_disconnected_is_zero(void) {
     CHECK(statusbar_wifi_bars(false, -40) == 0);
 }
@@ -90,6 +106,7 @@ static void test_render_draws_charging_bolt_when_charging(void) {
 }
 
 int main(void) {
+    test_signal_bars_ladder();
     test_wifi_bars_disconnected_is_zero();
     test_wifi_bars_thresholds();
     test_render_draws_more_wifi_bars_for_more_signal();

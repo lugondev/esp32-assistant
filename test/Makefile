@@ -3,7 +3,7 @@ CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
          -I../components/provisioning/include -I../components/wifi/include \
          -I../components/display/include -I../components/lugo_protocol/include
 SRC_PROVISIONING_SSID = ../components/provisioning/provisioning_ssid.c
-SRC_PROVISIONING_FORM = ../components/provisioning/provisioning_form.c
+SRC_PROVISIONING_FORM = ../components/provisioning/provisioning_form.c ../components/wifi/wifi_signal.c
 SRC_DISPLAY_FONT = ../components/display/display_font.c
 SRC_LUGO_PROTOCOL = ../components/lugo_protocol/lugo_protocol.c
 
@@ -30,19 +30,24 @@ ROBOT_EYES_CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
 SRC_ROBOT_EYES = ../components/robot_eyes/robot_eyes.c ../components/gfx/gfx.c ../components/display/display_font.c
 
 STATUSBAR_CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
+                    -I../components/wifi/include \
                     -I../components/statusbar/include -I../components/gfx/include \
                     -I../components/display/include
-SRC_STATUSBAR = ../components/statusbar/statusbar.c ../components/gfx/gfx.c ../components/display/display_font.c
+SRC_STATUSBAR = ../components/statusbar/statusbar.c ../components/gfx/gfx.c ../components/display/display_font.c ../components/wifi/wifi_signal.c
 
 BATTERY_CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
                  -I../components/battery/include -I../components/board/include -Ishims
 SRC_BATTERY = ../components/battery/battery_logic.c
 
-PAIRING_CFLAGS = -std=c11 -Wall -Wextra -g -O0 -I../components/pairing/include
-SRC_PAIRING_LOGIC = ../components/pairing/pairing_logic.c
+PAIRING_CFLAGS = -std=c11 -Wall -Wextra -g -O0 \
+                 -I../components/pairing/include -I../components/lugo_protocol/include
+SRC_PAIRING_LOGIC = ../components/pairing/pairing_logic.c ../components/lugo_protocol/lugo_protocol.c
+
+I2S_PCM_CFLAGS = -std=c11 -Wall -Wextra -g -O0 -I../components/audio/include
+SRC_I2S_PCM = ../components/audio/i2s_pcm.c
 
 .PHONY: test
-test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_protocol test_mcp_server test_board_select test_board_facades test_gfx test_robot_eyes test_statusbar test_battery_logic test_pairing_logic
+test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_protocol test_mcp_server test_board_select test_board_facades test_gfx test_robot_eyes test_statusbar test_battery_logic test_pairing_logic test_i2s_pcm
 	./test_provisioning_ssid
 	./test_provisioning_form
 	./test_display_font
@@ -55,6 +60,7 @@ test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_
 	./test_statusbar
 	./test_battery_logic
 	./test_pairing_logic
+	./test_i2s_pcm
 	@echo '--- mcp frame size ---'
 	python3 ../tools/check_mcp_frame_size.py
 
@@ -94,6 +100,9 @@ test_battery_logic: test_battery_logic.c $(SRC_BATTERY)
 test_pairing_logic: test_pairing_logic.c $(SRC_PAIRING_LOGIC)
 	$(CC) $(PAIRING_CFLAGS) -o $@ $^
 
+test_i2s_pcm: test_i2s_pcm.c $(SRC_I2S_PCM)
+	$(CC) $(I2S_PCM_CFLAGS) -o $@ $^
+
 clean:
 	rm -rf test_provisioning_ssid test_provisioning_ssid.dSYM \
 	       test_provisioning_form test_provisioning_form.dSYM \
@@ -106,4 +115,5 @@ clean:
 	       test_robot_eyes test_robot_eyes.dSYM \
 	       test_statusbar test_statusbar.dSYM \
 	       test_battery_logic test_battery_logic.dSYM \
-	       test_pairing_logic test_pairing_logic.dSYM
+	       test_pairing_logic test_pairing_logic.dSYM \
+	       test_i2s_pcm test_i2s_pcm.dSYM

@@ -68,6 +68,34 @@ void lugo_json_get_string(const char *json, const char *key, char *out, size_t c
     out[o] = '\0';
 }
 
+// Strict counterpart of lugo_json_get_string: refuses to truncate.
+int lugo_json_get_string_strict(const char *json, const char *key,
+                                char *out, size_t cap) {
+    if (cap == 0) return -1;
+    out[0] = '\0';
+    const char *p = lugo_json_find(json, key);
+    if (!p || *p != '"') return -1;
+    p++;
+    size_t o = 0;
+    while (*p != '"') {
+        if (!*p) return -1;   // ran off the end: no closing quote
+        char c = *p;
+        if (c == '\\' && p[1]) {
+            p++;
+            switch (*p) {
+                case 'n': c = '\n'; break; case 't': c = '\t'; break;
+                case 'r': c = '\r'; break; case 'b': c = '\b'; break;
+                case 'f': c = '\f'; break; default: c = *p; break;
+            }
+        }
+        if (o >= cap - 1) { out[0] = '\0'; return -1; }   // would truncate
+        out[o++] = c;
+        p++;
+    }
+    out[o] = '\0';
+    return 0;
+}
+
 // Read integer value for key; returns 0 if absent/non-numeric.
 int lugo_json_get_int(const char *json, const char *key) {
     const char *p = lugo_json_find(json, key);

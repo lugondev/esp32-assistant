@@ -115,6 +115,29 @@ int display_layout_line(const char *text, int screen_width) {
     return (screen_width - text_width) / 2;
 }
 
+void display_layout_lines(int screen_height, bool two_lines, int *y1, int *y2) {
+    if (!two_lines) {
+        *y1 = (screen_height - DISPLAY_FONT_GLYPH_HEIGHT) / 2;
+        *y2 = *y1;
+        return;
+    }
+    int block = 2 * DISPLAY_FONT_GLYPH_HEIGHT + DISPLAY_FONT_LINE_GAP;
+    *y1 = (screen_height - block) / 2;
+    *y2 = *y1 + DISPLAY_FONT_GLYPH_HEIGHT + DISPLAY_FONT_LINE_GAP;
+}
+
+void display_font_draw_centered(const char *text, int y, int screen_width,
+                                 display_font_glyph_fn put, void *ctx) {
+    int x = display_layout_line(text, screen_width);
+    if (x < 0) return;   // too wide for the screen — skip rather than wrap
+    for (const char *p = text; *p; p++) {
+        const uint8_t *glyph = display_font_glyph(*p);
+        if (glyph) put(x, y, glyph, ctx);
+        x += DISPLAY_FONT_GLYPH_WIDTH;   // advance even when unmapped, so the
+                                          // centering measured by strlen holds
+    }
+}
+
 void display_font_downscale(const uint8_t src[8], int dst_w, int dst_h, uint8_t *dst) {
     for (int oy = 0; oy < dst_h; oy++) {
         int sy0 = oy * 8 / dst_h;

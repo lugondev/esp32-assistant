@@ -1,14 +1,15 @@
 #include "statusbar.h"
 #include "gfx.h"
 #include "display_font.h"
+#include "wifi_signal.h"
 #include <string.h>
 
 int statusbar_wifi_bars(bool connected, int rssi_dbm) {
-    if (!connected) return 0;
-    if (rssi_dbm >= -55) return 4;
-    if (rssi_dbm >= -65) return 3;
-    if (rssi_dbm >= -75) return 2;
-    return 1;
+    // The thresholds themselves live in wifi_signal_bars — the setup portal
+    // renders the same ladder and the two used to keep private copies of it.
+    // All this layer adds is the "not associated" case the portal has no use
+    // for (a scan result is reachable by definition).
+    return connected ? wifi_signal_bars(rssi_dbm) : 0;
 }
 
 // Below this status-bar height, the full 8x8 font doesn't leave enough
@@ -38,18 +39,10 @@ static void draw_text(uint16_t *buf, int buf_w, int buf_h,
                 display_font_downscale(glyph, gw, gh, small);
                 glyph = small;
             }
-            for (int row = 0; row < gh; row++) {
-                uint8_t bits = glyph[row];
-                for (int col = 0; col < gw; col++) {
-                    if ((bits >> col) & 1) {
-                        int px = x + col, py = y + row;
-                        if (px >= 0 && px < buf_w && py >= 0 && py < buf_h)
-                            buf[py * buf_w + px] = fg;
-                    }
-                }
-            }
+            gfx_blit_bitmap1(buf, buf_w, buf_h, x, y, glyph, gw, gh, fg);
         }
-        x += gw;
+        x += gw;   // advance even for an unmapped character, so the layout
+                   // statusbar_render measured with strlen still holds
     }
 }
 

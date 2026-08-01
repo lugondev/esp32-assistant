@@ -13,11 +13,6 @@
         __attribute__((used, section("mcp_tool"))) = &sym;               \
     static const mcp_tool_desc_t sym =
 
-// No-op placeholder for future startup logic (kept for symmetry with
-// board_detect_and_select); the registry itself needs no init since
-// mcp_tools_dispatch walks the linker section directly.
-void mcp_tools_init(void);
-
 // Handle one mcp payload against every LUGO_MCP_TOOL-registered tool.
 // Target-only (walks the real linker section) — not host-tested.
 int mcp_tools_dispatch(const char *mcp_payload, char *out_buf, int out_cap);
