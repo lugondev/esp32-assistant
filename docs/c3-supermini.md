@@ -72,8 +72,9 @@ IPEX antenna. WiFi provisioning is otherwise standard: SoftAP `Lugo-XXXX` (open,
 
 - `CONFIG_AA_SKIP_DISPLAY_INIT` — skip OLED bring-up (no I2C), run headless.
 - `CONFIG_AA_SKIP_AUDIO_INIT` — skip mic/speaker I2S init.
-- `CONFIG_AA_WIFI_SSID` / `CONFIG_AA_WIFI_PASS` — hard-code STA creds (bypass
-  provisioning) to test joining a real router.
+- `CONFIG_AA_WIFI_SSID` / `CONFIG_AA_WIFI_PASS` — **simulator only.** These
+  bake a credential into the image; on hardware use the setup portal instead,
+  which now lists nearby networks to pick from.
 
 Handy for isolating a subsystem during hardware bring-up. Upstream reference for
 the C3 assistant design: <https://github.com/78/xiaozhi-esp32>.

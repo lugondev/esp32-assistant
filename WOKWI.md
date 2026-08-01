@@ -107,11 +107,12 @@ debugging trail if any of this needs revisiting:
 - **STA WiFi connect does work**, using Wokwi's fixed virtual AP
   (`Wokwi-GUEST`, open, no password — see
   [Wokwi's ESP32 WiFi guide](https://docs.wokwi.com/guides/esp32-wifi)).
-  `CONFIG_AA_WIFI_SSID`/`CONFIG_AA_WIFI_PASS` (empty by default, harmless on
-  real hardware — real devices always provision over the captive portal
-  instead) are set to `"Wokwi-GUEST"`/`""` in `sdkconfig.wokwi` only, so
-  `wifi_cfg_load()`'s NVS-empty fallback resolves to Wokwi's network in
-  simulation.
+  `CONFIG_AA_WIFI_SSID`/`CONFIG_AA_WIFI_PASS` are set to `"Wokwi-GUEST"`/`""`
+  in `sdkconfig.wokwi` only, so `wifi_cfg_load()`'s NVS-empty fallback resolves
+  to Wokwi's network in simulation. **This simulation is the only reason those
+  two options still exist** — they are labelled SIMULATOR ONLY in Kconfig, and
+  on hardware an empty SSID is what sends first boot straight to the setup
+  portal.
 
 ## What's actually worth using this for
 

@@ -1204,9 +1204,20 @@ void app_main(void) {
     // down explicitly. Loaded once here and never mutated again.
     ESP_ERROR_CHECK(wifi_cfg_load(&s_cfg));
 
+    // wifi_sta_start runs even with an empty SSID: provisioning_start needs a
+    // started, STA-mode radio to scan for networks before it flips to AP mode.
+    ESP_ERROR_CHECK(wifi_sta_start(s_cfg.ssid, s_cfg.password));
+    if (s_cfg.ssid[0] == '\0') {
+        // Nothing configured yet (fresh device, or NVS cleared). Skip straight
+        // to the portal instead of spending 15s waiting on a connect attempt
+        // that has no SSID to attempt. This is the normal first-boot path now
+        // that no build-time credentials exist.
+        ESP_LOGI(TAG, "no wifi configured, starting setup portal");
+        display_show("Setup needed", "Starting setup AP...");
+        provisioning_start(&s_cfg);  // does not return
+    }
     display_show("Connecting WiFi...", NULL);
     voice_play(VOICE_CONNECTING);
-    ESP_ERROR_CHECK(wifi_sta_start(s_cfg.ssid, s_cfg.password));
     if (!wifi_sta_wait_connected(15000)) {
         ESP_LOGW(TAG, "wifi connect failed, starting provisioning portal");
         display_show("WiFi failed", "Starting setup AP...");

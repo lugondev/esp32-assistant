@@ -1,6 +1,7 @@
 #include "provisioning.h"
 #include "provisioning_ssid.h"
 #include "provisioning_form.h"
+#include "wifi_sta.h"
 #include "display.h"
 #include "voice.h"
 #include "esp_wifi.h"
@@ -19,6 +20,68 @@
 static const char *TAG = "provisioning";
 
 static wifi_cfg_t s_cfg;  // working copy shown/edited by the portal
+
+// Networks shown in the portal's picker, captured once by scan_networks()
+// before the radio switches to AP mode (see provisioning_start).
+static prov_network_t s_nets[PROV_MAX_NETWORKS];
+static int s_n_nets;
+
+// Snapshot the surrounding APs while the radio is still in STA mode.
+//
+// Timing is the whole trick here: this MUST run before esp_wifi_set_mode(AP).
+// A scan needs a station interface, and the portal deliberately runs AP-only
+// (an APSTA portal let wifi_sta's reconnect handler keep sweeping channels,
+// which starves the AP beacon and makes "Lugo-XXXX" unfindable — the reason
+// the mode is pinned in the first place). Scanning first, then committing to
+// AP-only, gets a real network list without reintroducing that.
+//
+// The consequence is that the list is a snapshot, not live: there is no
+// rescan button, because serving one would need the STA interface back. A
+// network that appears later is still reachable by typing its name into the
+// SSID field, which the form keeps as a plain input for exactly this case.
+static void scan_networks(void) {
+    // Take wifi_sta out of the loop first. Its reconnect backoff is still
+    // running whenever we got here from a failed connect (rather than from an
+    // unconfigured first boot), and an esp_wifi_connect() landing mid-scan
+    // contends for the same radio.
+    wifi_sta_suspend();
+
+    wifi_scan_config_t scan = { .show_hidden = false };
+    esp_err_t err = esp_wifi_scan_start(&scan, true);   // blocking
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "wifi scan failed (%s) — portal will offer manual entry only",
+                 esp_err_to_name(err));
+        return;
+    }
+
+    uint16_t found = 0;
+    esp_wifi_scan_get_ap_num(&found);
+    if (found == 0) { ESP_LOGW(TAG, "wifi scan found no networks"); return; }
+
+    // Pull more records than we will show: the list is de-duplicated by SSID
+    // afterwards, and a dual-band router or a mesh burns several records on one
+    // network, so fetching only PROV_MAX_NETWORKS would truncate real networks
+    // before dedup ever ran.
+    uint16_t want = found > 40 ? 40 : found;
+    wifi_ap_record_t *recs = calloc(want, sizeof(*recs));
+    if (!recs) { esp_wifi_clear_ap_list(); return; }   // release the driver's copy
+    esp_wifi_scan_get_ap_records(&want, recs);
+
+    prov_network_t *all = calloc(want, sizeof(*all));
+    if (!all) { free(recs); return; }
+    for (uint16_t i = 0; i < want; i++) {
+        snprintf(all[i].ssid, sizeof all[i].ssid, "%s", (const char *)recs[i].ssid);
+        all[i].rssi = recs[i].rssi;
+        all[i].secure = recs[i].authmode != WIFI_AUTH_OPEN;
+    }
+    int n = provisioning_sort_networks(all, (int)want);
+    for (int i = 0; i < n; i++) s_nets[i] = all[i];
+    s_n_nets = n;
+
+    free(all);
+    free(recs);
+    ESP_LOGI(TAG, "wifi scan: %u records -> %d networks offered", (unsigned)found, s_n_nets);
+}
 
 static void dns_task(void *arg) {
     (void)arg;
@@ -69,9 +132,9 @@ static void dns_task(void *arg) {
 }
 
 static esp_err_t root_get_handler(httpd_req_t *req) {
-    char *buf = malloc(4096);
+    char *buf = malloc(PROV_PAGE_BUF);
     if (!buf) return ESP_ERR_NO_MEM;
-    int n = provisioning_render_form(buf, 4096, &s_cfg, NULL);
+    int n = provisioning_render_form(buf, PROV_PAGE_BUF, &s_cfg, NULL, s_nets, s_n_nets);
     if (n < 0) { free(buf); httpd_resp_send_500(req); return ESP_FAIL; }
     httpd_resp_set_type(req, "text/html");
     httpd_resp_send(req, buf, n);
@@ -99,12 +162,24 @@ static esp_err_t save_post_handler(httpd_req_t *req) {
     int rc = provisioning_parse_form(body, received, &parsed);
     free(body);
 
-    char *resp_buf = malloc(4096);
+    char *resp_buf = malloc(PROV_PAGE_BUF);
     if (!resp_buf) return ESP_ERR_NO_MEM;
 
     if (rc != 0) {
-        int n = provisioning_render_form(resp_buf, 4096, &s_cfg,
-            "Invalid input: SSID and gateway host are required, port must be 1-65535.");
+        // Re-render with what the user actually typed, not with s_cfg. Handing
+        // back the stored config threw away their entries on every validation
+        // failure — pick the wrong port and you also lost the network name you
+        // had just selected. provisioning_parse_form fills *out left to right
+        // and stops at the first bad field, so whatever it did manage to parse
+        // is good; anything it never reached stays empty and falls back to the
+        // stored value.
+        wifi_cfg_t shown = s_cfg;
+        if (parsed.ssid[0])        snprintf(shown.ssid, sizeof shown.ssid, "%s", parsed.ssid);
+        if (parsed.server_host[0]) snprintf(shown.server_host, sizeof shown.server_host, "%s", parsed.server_host);
+        if (parsed.server_port > 0) shown.server_port = parsed.server_port;
+        int n = provisioning_render_form(resp_buf, PROV_PAGE_BUF, &shown,
+            "Invalid input: network name and gateway host are required, port must be 1-65535.",
+            s_nets, s_n_nets);
         if (n < 0) { free(resp_buf); httpd_resp_send_500(req); return ESP_FAIL; }
         httpd_resp_set_type(req, "text/html");
         httpd_resp_send(req, resp_buf, n);
@@ -123,8 +198,8 @@ static esp_err_t save_post_handler(httpd_req_t *req) {
 
     esp_err_t err = wifi_cfg_save(&parsed);
     if (err != ESP_OK) {
-        int n = provisioning_render_form(resp_buf, 4096, &parsed,
-                                          "Failed to save. Try again.");
+        int n = provisioning_render_form(resp_buf, PROV_PAGE_BUF, &parsed,
+                                          "Failed to save. Try again.", s_nets, s_n_nets);
         if (n < 0) { free(resp_buf); httpd_resp_send_500(req); return ESP_FAIL; }
         httpd_resp_set_type(req, "text/html");
         httpd_resp_send(req, resp_buf, n);
@@ -132,7 +207,7 @@ static esp_err_t save_post_handler(httpd_req_t *req) {
         return ESP_OK;
     }
 
-    int n = provisioning_render_saved(resp_buf, 4096);
+    int n = provisioning_render_saved(resp_buf, PROV_PAGE_BUF);
     httpd_resp_set_type(req, "text/html");
     httpd_resp_send(req, resp_buf, n > 0 ? n : 0);
     free(resp_buf);
@@ -144,6 +219,12 @@ static esp_err_t save_post_handler(httpd_req_t *req) {
 
 void provisioning_start(const wifi_cfg_t *current) {
     s_cfg = *current;
+
+    // Before anything switches the radio: grab the network list while a station
+    // interface still exists (see scan_networks). Also shows the user something
+    // is happening — a scan takes a couple of seconds.
+    display_show("Scanning WiFi", "Please wait...");
+    scan_networks();
 
     esp_netif_t *ap_netif = esp_netif_create_default_wifi_ap();
     esp_netif_dhcps_stop(ap_netif);

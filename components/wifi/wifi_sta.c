@@ -19,8 +19,15 @@ static EventGroupHandle_t s_events;
 static esp_timer_handle_t s_reconnect_timer;
 static int s_disconnects;   // consecutive failures since the last got-IP
 
+// Set by wifi_sta_suspend() to take this module out of the reconnect business
+// for good. Without it the backoff timer keeps firing esp_wifi_connect() after
+// the caller has moved on to something else on the same radio — see the
+// function's own comment for why that matters.
+static volatile bool s_suspended;
+
 static void reconnect_timer_cb(void *arg) {
     (void)arg;
+    if (s_suspended) return;
     esp_wifi_connect();
 }
 
@@ -31,6 +38,7 @@ static void on_wifi(void *arg, esp_event_base_t base, int32_t id, void *data) {
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t *d = (wifi_event_sta_disconnected_t *)data;
         xEventGroupClearBits(s_events, BIT_CONNECTED);
+        if (s_suspended) return;   // handing the radio over; don't re-arm
         int shift = s_disconnects < 4 ? s_disconnects : 4;
         if (s_disconnects < 4) s_disconnects++;
         uint64_t delay_ms = 500ULL << shift;   // 500ms, 1s, 2s, 4s, 8s cap
@@ -88,4 +96,18 @@ bool wifi_sta_get_rssi(int *out_dbm) {
 
 void wifi_sta_set_perf_mode(bool perf) {
     esp_wifi_set_ps(perf ? WIFI_PS_NONE : WIFI_PS_MIN_MODEM);
+}
+
+void wifi_sta_suspend(void) {
+    // Permanent, and deliberately so — the only caller hands the radio to the
+    // provisioning portal, which ends in esp_restart().
+    //
+    // The disconnect alone is not enough: DISCONNECTED fires this module's own
+    // handler, which would arm the backoff timer and call esp_wifi_connect()
+    // again seconds later. That lands either in the middle of the portal's
+    // blocking scan (the scan and an association attempt contend for the same
+    // radio) or after the mode switch to AP, so the flag has to go up first.
+    s_suspended = true;
+    esp_timer_stop(s_reconnect_timer);   // no-op if not running
+    esp_wifi_disconnect();               // errors are fine: may not be associated
 }

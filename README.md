@@ -123,15 +123,25 @@ connect using whatever SSID/password is saved in NVS. If nothing is saved yet
 (first boot), or the saved credentials fail to connect within 15 seconds, the
 device switches into **provisioning mode**:
 
-1. It starts an open WiFi access point named `Lugo-XXXX` (`XXXX` = the last
+1. It scans for nearby networks **first**, while the radio is still in station
+   mode, and keeps the list. (This has to happen before the AP comes up: a scan
+   needs a station interface, and running the portal as AP+STA starves the
+   beacon and makes `Lugo-XXXX` unfindable.)
+2. It starts an open WiFi access point named `Lugo-XXXX` (`XXXX` = the last
    4 hex digits of the device's MAC address — stable across reboots, so it's
    always the same network name for a given device).
-2. Connect a phone or laptop to that network. Most OSes will pop up a
+3. Connect a phone or laptop to that network. Most OSes will pop up a
    "Sign in to network" / captive-portal prompt automatically; if not,
    browse to `http://192.168.9.1`.
-3. Fill in your WiFi SSID/password and the gateway host/port, then submit.
-4. The device saves the values to NVS and restarts, this time connecting to
-   your WiFi and the gateway.
+4. Tap your network in the list — that fills the name field, so all you type is
+   the password. Networks are de-duplicated by name and sorted strongest-first,
+   each row showing signal strength and whether it is secured. Hidden networks
+   are not listed; type the name into the field instead.
+5. Set the gateway host/port and submit. The device saves to NVS and restarts,
+   this time connecting to your WiFi and the gateway.
+
+The list is a snapshot taken at portal start, so there is no rescan button — if
+a network appears later, reboot the device or type its name in directly.
 
 To reconfigure later (new WiFi network, moved gateway), the easiest path is
 to erase NVS and reboot so it goes straight back into provisioning mode:
