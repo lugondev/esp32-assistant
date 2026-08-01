@@ -120,6 +120,51 @@ static void test_fill_triangle_clips_to_buffer(void) {
     CHECK(px(0, 4) == 0xFFFF);  // inside the clipped-in portion, no crash
 }
 
+// --- 1-bit bitmap blit -----------------------------------------------------
+// The shape statusbar and robot_eyes both need to put a font glyph on screen:
+// lit bits get painted, clear bits are transparent (they must not erase what
+// the renderer already drew underneath).
+
+static void test_blit_bitmap1_paints_lit_bits_only(void) {
+    clear(0x1111);
+    const uint8_t rows[2] = { 0x01, 0x02 };   // (0,0) and (1,1)
+    gfx_blit_bitmap1(buf, W, H, 3, 4, rows, 2, 2, 0xFFFF);
+    CHECK(px(3, 4) == 0xFFFF);
+    CHECK(px(4, 5) == 0xFFFF);
+    CHECK(px(4, 4) == 0x1111);   // clear bit: untouched, not blacked out
+    CHECK(px(3, 5) == 0x1111);
+}
+
+// Bit 0 is the LEFTMOST pixel (display_font's convention) — getting this
+// backwards mirrors every glyph on screen.
+static void test_blit_bitmap1_bit0_is_leftmost(void) {
+    clear(0x0000);
+    const uint8_t rows[1] = { 0x01 };
+    gfx_blit_bitmap1(buf, W, H, 0, 0, rows, 8, 1, 0xFFFF);
+    CHECK(px(0, 0) == 0xFFFF);
+    CHECK(px(7, 0) == 0x0000);
+}
+
+static void test_blit_bitmap1_clips_to_buffer(void) {
+    clear(0x0000);
+    const uint8_t rows[8] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    gfx_blit_bitmap1(buf, W, H, -2, -2, rows, 8, 8, 0xFFFF);   // straddles the origin
+    gfx_blit_bitmap1(buf, W, H, W - 2, H - 2, rows, 8, 8, 0xFFFF);  // straddles the far corner
+    CHECK(px(0, 0) == 0xFFFF);
+    CHECK(px(W - 1, H - 1) == 0xFFFF);
+}
+
+// A downscaled glyph is handed over as a narrower/shorter bitmap; bits outside
+// w x h must be ignored rather than bleeding into the next character cell.
+static void test_blit_bitmap1_ignores_bits_outside_w_h(void) {
+    clear(0x0000);
+    const uint8_t rows[8] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+    gfx_blit_bitmap1(buf, W, H, 0, 0, rows, 3, 2, 0xFFFF);
+    CHECK(px(2, 1) == 0xFFFF);
+    CHECK(px(3, 0) == 0x0000);   // past w
+    CHECK(px(0, 2) == 0x0000);   // past h
+}
+
 int main(void) {
     test_fill_rect_paints_inside_only();
     test_fill_rect_clips_to_buffer();
@@ -133,6 +178,10 @@ int main(void) {
     test_fill_triangle_paints_interior_and_excludes_outside();
     test_fill_triangle_vertex_order_does_not_matter();
     test_fill_triangle_clips_to_buffer();
+    test_blit_bitmap1_paints_lit_bits_only();
+    test_blit_bitmap1_bit0_is_leftmost();
+    test_blit_bitmap1_clips_to_buffer();
+    test_blit_bitmap1_ignores_bits_outside_w_h();
     if (failures) { printf("%d FAILURES\n", failures); return 1; }
     printf("ALL PASS\n");
     return 0;

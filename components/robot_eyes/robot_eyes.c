@@ -522,16 +522,7 @@ static void render_zzz_cluster(uint16_t *buf, int buf_w, int buf_rows, int panel
     for (unsigned i = 0; i < visible && i < 3; i++) {
         int gx = base_x + (int)i * (gw + 2);
         int gy = bottom_y - gh - (int)i * (gh - 2);
-        for (int row = 0; row < gh; row++) {
-            uint8_t bits = glyph[row];
-            for (int col = 0; col < gw; col++) {
-                if ((bits >> col) & 1) {
-                    int px = gx + col, py = gy + row;
-                    if (px >= 0 && px < buf_w && py >= 0 && py < buf_rows)
-                        buf[py * buf_w + px] = fg;
-                }
-            }
-        }
+        gfx_blit_bitmap1(buf, buf_w, buf_rows, gx, gy, glyph, gw, gh, fg);
     }
 }
 

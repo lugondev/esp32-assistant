@@ -14,6 +14,21 @@ void gfx_fill_rect(uint16_t *buf, int buf_w, int buf_h,
     }
 }
 
+void gfx_blit_bitmap1(uint16_t *buf, int buf_w, int buf_h, int x, int y,
+                       const uint8_t *rows, int w, int h, uint16_t color) {
+    for (int row = 0; row < h; row++) {
+        int py = y + row;
+        if (py < 0 || py >= buf_h) continue;
+        uint8_t bits = rows[row];
+        for (int col = 0; col < w; col++) {
+            if (!((bits >> col) & 1)) continue;   // clear bit: transparent
+            int px = x + col;
+            if (px < 0 || px >= buf_w) continue;
+            buf[py * buf_w + px] = color;
+        }
+    }
+}
+
 void gfx_fill_circle(uint16_t *buf, int buf_w, int buf_h,
                       int cx, int cy, int r, uint16_t color) {
     int x0 = cx - r < 0 ? 0 : cx - r;

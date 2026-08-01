@@ -39,18 +39,10 @@ static void draw_text(uint16_t *buf, int buf_w, int buf_h,
                 display_font_downscale(glyph, gw, gh, small);
                 glyph = small;
             }
-            for (int row = 0; row < gh; row++) {
-                uint8_t bits = glyph[row];
-                for (int col = 0; col < gw; col++) {
-                    if ((bits >> col) & 1) {
-                        int px = x + col, py = y + row;
-                        if (px >= 0 && px < buf_w && py >= 0 && py < buf_h)
-                            buf[py * buf_w + px] = fg;
-                    }
-                }
-            }
+            gfx_blit_bitmap1(buf, buf_w, buf_h, x, y, glyph, gw, gh, fg);
         }
-        x += gw;
+        x += gw;   // advance even for an unmapped character, so the layout
+                   // statusbar_render measured with strlen still holds
     }
 }
 
