@@ -1315,9 +1315,10 @@ void app_main(void) {
     // costs static RAM, not runtime.
     xTaskCreate(idle_watchdog_task, "idle_wd", 6144, NULL, 3, NULL);
 
-    // STT/TTS/language all come from the chatllm profile server-side; the device
-    // configures only which profile to connect to (CONFIG_AA_PROFILE). Downlink
-    // is decoded at 16 kHz to match the device opus decoder.
+    // STT/TTS/language all come from the chatllm profile server-side, and so
+    // does the choice of profile itself: the gateway resolves it from this
+    // device's binding (or its own defaults), so the wakeup declares none.
+    // Downlink is decoded at 16 kHz to match the device opus decoder.
     // resolve_device_token(): stored NVS token -> pair now (blocks until
     // claimed; status_task is already running by this point so
     // show_pair_code's queue-based update is safe).
@@ -1325,7 +1326,7 @@ void app_main(void) {
     s_last_activity_s = (uint32_t)(esp_timer_get_time() / 1000000);
     ESP_ERROR_CHECK(ws_client_start(
         s_cfg.server_host, s_cfg.server_port, CONFIG_AA_SERVER_SECURE,
-        CONFIG_AA_PROFILE, device_token, 16000, 16000, 60, on_event, on_audio));
+        device_token, 16000, 16000, 60, on_event, on_audio));
 
     // mic_task runs opus_encode(), which is extraordinarily stack-hungry on
     // ESP32 (SILK wideband analysis buffers live on the stack): measured

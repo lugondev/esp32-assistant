@@ -75,10 +75,14 @@ static void test_parse_not_object(void) {
 
 static void test_build_wakeup_and_controls(void) {
     char buf[256];
-    int n = lugo_build_wakeup(buf, sizeof buf, "esp32-assistant", 16000, 16000, 60);
+    int n = lugo_build_wakeup(buf, sizeof buf, 16000, 16000, 60);
     CHECK(n > 0);
     CHECK(strstr(buf, "\"type\":\"wakeup\"") != NULL);
-    CHECK(strstr(buf, "\"profile\":\"esp32-assistant\"") != NULL);
+    // No `profile` key at all: the gateway owns that choice. A paired device's
+    // server-side binding outranks anything the wakeup declares (see
+    // resolve_bound_profile in the gateway's lugo route), so sending one here
+    // was at best ignored and at worst a stale name the device could not fix.
+    CHECK(strstr(buf, "profile") == NULL);
     CHECK(strstr(buf, "\"sample_rate\":16000") != NULL);
     CHECK(strstr(buf, "\"output_sample_rate\":16000") != NULL);
     CHECK(lugo_build_abort(buf, sizeof buf, "user") > 0);
@@ -102,7 +106,7 @@ static void test_build_new_session(void) {
 
 static void test_wakeup_advertises_mcp_feature(void) {
     char buf[256];
-    int n = lugo_build_wakeup(buf, sizeof buf, "dev", 16000, 24000, 60);
+    int n = lugo_build_wakeup(buf, sizeof buf, 16000, 24000, 60);
     CHECK(n > 0);
     CHECK(strstr(buf, "\"features\"") != NULL);
     CHECK(strstr(buf, "\"mcp\":true") != NULL);

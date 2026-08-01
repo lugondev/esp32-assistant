@@ -154,14 +154,14 @@ int lugo_parse_event(const char *json, lugo_event_t *out) {
     return 0;
 }
 
-int lugo_build_wakeup(char *buf, int buflen, const char *profile,
-                      int in_sr, int out_sr, int frame_ms) {
+int lugo_build_wakeup(char *buf, int buflen, int in_sr, int out_sr,
+                      int frame_ms) {
     int n = snprintf(buf, buflen,
-        "{\"type\":\"wakeup\",\"profile\":\"%s\",\"trigger\":\"button\","
+        "{\"type\":\"wakeup\",\"trigger\":\"button\","
         "\"audio_params\":{\"format\":\"opus\",\"sample_rate\":%d,"
         "\"output_sample_rate\":%d,\"frame_duration\":%d},"
         "\"features\":{\"mcp\":true}}",
-        profile ? profile : "", in_sr, out_sr, frame_ms);
+        in_sr, out_sr, frame_ms);
     if (n < 0 || n >= buflen) return -1;
     return n;
 }
