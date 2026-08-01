@@ -20,3 +20,22 @@
 // call site instead of being buried in this loop.
 void i2s_pcm_from_i2s32(const int32_t *raw, int frames, int gain_shift,
                         int16_t *pcm);
+
+// --- software output volume ------------------------------------------------
+// The MAX98357A has no hardware volume control, so the speaker drivers scale
+// samples themselves on the way to the DMA. Both drivers used to carry their
+// own copy of all three of these.
+
+// Clamp a requested level to 0..100.
+int i2s_pcm_clamp_volume(int pct);
+
+// Convert a 0..100 level to a Q8 multiplier (100% -> 256). Q8 rather than a
+// per-sample divide by 100: this scales 960 samples per 60 ms frame, and a
+// shift is free where the divide is not. The rounding differs from integer
+// division by at most 1 LSB, which is inaudible at any level.
+int i2s_pcm_gain_q8(int volume_pct);
+
+// Scale `n` samples by a Q8 gain. in and out may be the same buffer.
+// No clamping: gain_q8 comes from i2s_pcm_gain_q8, which never exceeds unity,
+// so the product cannot leave int16 range.
+void i2s_pcm_apply_gain(const int16_t *in, int16_t *out, int n, int gain_q8);
