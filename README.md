@@ -26,7 +26,7 @@ Operation is **hands-free** (the server detects speech boundaries with VAD) and 
 
 Boards are auto-globbed from `components/boards/<name>/board_def.c` and selected by
 `CONFIG_AA_BOARD_*` (see **Boards & wiring** below). Each board declares its own mic/speaker/
-display/button pins, so you pick a board instead of editing global pin defaults.
+display/button pins, so you pick a board instead of hand-editing pin numbers.
 
 ---
 
@@ -93,14 +93,14 @@ not from this table.
 
 | Option | Key | Default | Notes |
 |--------|-----|---------|-------|
-| Target board | `AA_BOARD_*` | auto-detect | Pick your board, or leave auto-detect (multi-board single binary) |
+| Target board | `AA_BOARD_*` | `lugo-s3-nx` (S3) / `lugo-c3-devkit` (C3) | Compiles only the selected board; pick *Custom board* for unwired hardware |
 | Gateway host | `AA_SERVER_HOST` | `192.168.1.50` | IP or domain |
 | Gateway port | `AA_SERVER_PORT` | `8000` | |
 | Use wss:// (TLS) | `AA_SERVER_SECURE` | off | Enable for production |
 
 Mic/speaker/display/button pins are defined per board in
 `components/boards/<name>/board_def.c` — **pick the board that matches your wiring** rather than
-editing global pin defaults.
+hand-editing pin numbers.
 
 > **Per-device pairing (the only path).** The device gets its own token through
 > the server pairing flow rather than a shared secret. On boot it resolves a
@@ -266,7 +266,7 @@ This repo has a Wokwi setup (`wokwi.toml`, `diagram.json`) for running the firmw
 hardware — see [WOKWI.md](WOKWI.md) for the build steps, custom-chip compilation, and, importantly,
 its limitations: Wokwi cannot simulate I2S at all (neither the chip API nor the ESP32-S3's own I2S
 HAL), so mic/speaker are stubbed out and voice round-trip cannot be tested this way. It's useful
-for board-autodetect, display, WiFi, and button-logic regressions only.
+for board-select, display, WiFi, and button-logic regressions only.
 
 ---
 
