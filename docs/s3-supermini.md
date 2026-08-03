@@ -22,8 +22,9 @@ select, console); the S3-wide tuning — 240MHz, 32KB I-cache / 64KB D-cache wit
 64B lines, QIO flash — is inherited. Pass the same two flags on every subsequent
 `idf.py` invocation for this board, including `menuconfig`.
 
-> The first build of a new board directory needs `idf.py reconfigure` (or
-> `fullclean`) so the `components/boards/*/board_def.c` glob picks it up.
+> Adding a board directory also means adding its `choice AA_BOARD` entry in
+> `main/Kconfig.projbuild`; the first build after that needs `idf.py reconfigure`
+> (or `fullclean`) so the new `CONFIG_AA_BOARD_NAME` value is picked up.
 
 ## Pin map
 

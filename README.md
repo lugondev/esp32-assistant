@@ -24,9 +24,9 @@ Operation is **hands-free** (the server detects speech boundaries with VAD) and 
 - **Display (optional, auto-detected):** SSD1306 (I2C) if it ACKs, else ST7789 (SPI) on the
   same physical pins. A board with no panel runs headless.
 
-Boards are auto-globbed from `components/boards/<name>/board_def.c` and selected by
-`CONFIG_AA_BOARD_*` (see **Boards & wiring** below). Each board declares its own mic/speaker/
-display/button pins, so you pick a board instead of hand-editing pin numbers.
+Boards live one per directory under `components/boards/<name>/board_def.c`; CMake compiles
+only the one `CONFIG_AA_BOARD_*` selects (see **Boards & wiring** below). Each board declares
+its own mic/speaker/display/button pins, so you pick a board instead of hand-editing pin numbers.
 
 ---
 
