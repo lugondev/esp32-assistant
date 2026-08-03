@@ -33,26 +33,6 @@ config AA_WIFI_PASS
     string "SIMULATOR ONLY: hardcoded WiFi password (paired with AA_WIFI_SSID)"
     default ""
 
-config AA_MIC_WS
-    int "INMP441 mic I2S WS/LRCK gpio"
-    default 4
-config AA_MIC_SCK
-    int "INMP441 mic I2S SCK/BCLK gpio"
-    default 5
-config AA_MIC_SD
-    int "INMP441 mic I2S SD (data out from mic) gpio"
-    default 6
-
-config AA_SPK_BCLK
-    int "MAX98357A speaker I2S BCLK gpio"
-    default 15
-config AA_SPK_LRC
-    int "MAX98357A speaker I2S LRC/WS gpio"
-    default 16
-config AA_SPK_DIN
-    int "MAX98357A speaker I2S DIN (data into amp) gpio"
-    default 7
-
 config AA_BOOT_COLOR_BARS
     bool "Show RGB color bars for 2s at boot (display smoke test)"
     default n

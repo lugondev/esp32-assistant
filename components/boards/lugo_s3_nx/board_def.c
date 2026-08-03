@@ -11,11 +11,23 @@
 // the ST7789 (SPI on the same physical pins). This one board replaces the old
 // lugo-s3-ssd1306 / lugo-s3-st7789 split (they were the same board, only the
 // soldered panel differed).
+// These were CONFIG_AA_MIC_*/CONFIG_AA_SPK_* until 2026-08-03. Those symbols
+// were global, and lugo-s3-wroom read the same ones, so the two boards could
+// not be given different audio pins — retuning one silently retuned the other.
+// The values below are exactly what those symbols defaulted to, i.e. the NX's
+// real wiring, now written where the rest of this board's pins live.
+#define PIN_MIC_WS    4
+#define PIN_MIC_SCK   5
+#define PIN_MIC_SD    6
+#define PIN_SPK_BCLK 15
+#define PIN_SPK_LRC  16
+#define PIN_SPK_DIN   7
+
 static const i2s_mic_cfg_t mic_cfg = {
-    .port = 0, .ws = CONFIG_AA_MIC_WS, .sck = CONFIG_AA_MIC_SCK, .sd = CONFIG_AA_MIC_SD,
+    .port = 0, .ws = PIN_MIC_WS, .sck = PIN_MIC_SCK, .sd = PIN_MIC_SD,
 };
 static const i2s_speaker_cfg_t spk_cfg = {
-    .port = 1, .bclk = CONFIG_AA_SPK_BCLK, .lrc = CONFIG_AA_SPK_LRC, .din = CONFIG_AA_SPK_DIN,
+    .port = 1, .bclk = PIN_SPK_BCLK, .lrc = PIN_SPK_LRC, .din = PIN_SPK_DIN,
 };
 // Same physical pins carry either I2C (SSD1306 SCL/SDA) or SPI (ST7789
 // SCLK/MOSI) depending on the soldered panel; ST7789 additionally uses dc/rst/bl.

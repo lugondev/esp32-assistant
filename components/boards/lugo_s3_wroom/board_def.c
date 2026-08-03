@@ -14,11 +14,23 @@
 // then set `.camera = &esp_camera_ops, .camera_cfg = &camera_cfg` here. Nothing
 // in this board_def changes shape otherwise; the camera is just another optional
 // capability the board plugs in.
+// PLACEHOLDER audio pins (copied from lugo-s3-nx), matching the placeholder
+// display/button pins below. These were CONFIG_AA_MIC_*/CONFIG_AA_SPK_* until
+// 2026-08-03, shared with the NX; they are literals now so this board can be
+// given its real pinout without disturbing the NX. Fill in when the board
+// exists.
+#define PIN_MIC_WS    4
+#define PIN_MIC_SCK   5
+#define PIN_MIC_SD    6
+#define PIN_SPK_BCLK 15
+#define PIN_SPK_LRC  16
+#define PIN_SPK_DIN   7
+
 static const i2s_mic_cfg_t mic_cfg = {
-    .port = 0, .ws = CONFIG_AA_MIC_WS, .sck = CONFIG_AA_MIC_SCK, .sd = CONFIG_AA_MIC_SD,
+    .port = 0, .ws = PIN_MIC_WS, .sck = PIN_MIC_SCK, .sd = PIN_MIC_SD,
 };
 static const i2s_speaker_cfg_t spk_cfg = {
-    .port = 1, .bclk = CONFIG_AA_SPK_BCLK, .lrc = CONFIG_AA_SPK_LRC, .din = CONFIG_AA_SPK_DIN,
+    .port = 1, .bclk = PIN_SPK_BCLK, .lrc = PIN_SPK_LRC, .din = PIN_SPK_DIN,
 };
 // PLACEHOLDER pins (copied from lugo-s3-nx). Named so board_t.reserved_pins
 // below reuses the same constants — when the real pinout lands, changing these
