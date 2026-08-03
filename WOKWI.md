@@ -92,10 +92,12 @@ debugging trail if any of this needs revisiting:
 - **No ST7789 element in Wokwi.** Checked the official
   [`wokwi/wokwi-elements`](https://github.com/wokwi/wokwi-elements) source —
   only `wokwi-ili9341` exists for SPI color TFTs, no ST7789. `diagram.json`
-  uses `wokwi-ssd1306` (I2C OLED) instead, which correctly makes board
-  autodetect select `lugo-s3-ssd1306` in simulation. If your physical board is
-  wired for `lugo-s3-st7789` (SPI), that variant can only be verified on real
-  hardware.
+  uses `wokwi-ssd1306` (I2C OLED) instead. `sdkconfig.wokwi` sets no
+  `CONFIG_AA_BOARD_*`, so the simulator builds the esp32s3 default board,
+  `lugo-s3-nx`; that board declares `.display = NULL`, so `display_init()`
+  probes its shared clock/data pins, finds the simulated SSD1306, and takes the
+  OLED branch. The ST7789 branch of the same board has no element to probe
+  against and can only be verified on real hardware.
 
 - **The AP-provisioning flow can't be tested end-to-end.** When WiFi STA
   connect fails, the firmware brings up its own SoftAP (`Lugo-XXXX`) for
@@ -119,7 +121,7 @@ debugging trail if any of this needs revisiting:
 Given the limitations above, treat this as a narrow tool, not a hardware
 substitute:
 
-- Regression-checking `board_def.c`/autodetect changes without needing a
+- Regression-checking `board_def.c`/board-select changes without needing a
   physical board on your desk.
 - Iterating on display/HUD/robot-eyes rendering logic.
 - Checking the WiFi connect → WS client → button state-machine flow.

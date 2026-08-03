@@ -111,7 +111,7 @@ LUGO_BOARD_REGISTER(board_lugo_custom) {
     .name        = "lugo-custom",
     .mic         = CUSTOM_MIC_OPS,
     .speaker     = CUSTOM_SPEAKER_OPS,
-    .display     = NULL,                  // NULL -> auto-detect (see display_cfg)
+    .display     = NULL,                  // see CUSTOM_DISPLAY_CFG above
     .buttons     = &buttons_gpio_ops,
     .mic_cfg     = CUSTOM_MIC_CFG,
     .speaker_cfg = CUSTOM_SPEAKER_CFG,

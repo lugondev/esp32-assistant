@@ -6,6 +6,14 @@
 # The else branch is for ESP-IDF's requirements-extraction pass, which parses
 # this file in CMake script mode where no CONFIG_* is defined yet. SRCS is
 # ignored in that pass; the glob just gives it something well-formed.
+#
+# It also fires in the real pass whenever AA_BOARD_NAME resolves to "" — which
+# happens on a target no entry of `choice AA_BOARD` is visible on. That case is
+# not benign: you get a glob build that compiles every board, registers none
+# (see WHOLE_ARCHIVE below) and fails at boot with registered=0, i.e. exactly
+# the late failure this if/else was written to move to configure time. Keeping
+# AA_BOARD_CUSTOM visible on every target is what stops that from happening —
+# see the comment on it in main/Kconfig.projbuild.
 if(CONFIG_AA_BOARD_NAME)
     string(REPLACE "-" "_" _board_dir "${CONFIG_AA_BOARD_NAME}")
     set(BOARD_SRCS "${CMAKE_CURRENT_SOURCE_DIR}/${_board_dir}/board_def.c")
@@ -27,5 +35,5 @@ idf_component_register(
 # nothing references by name. Without WHOLE_ARCHIVE the linker never pulls the
 # board_def.c object out of libboards.a (archive-member selection happens before
 # --gc-sections / KEEP()), so the board_desc section stays empty and
-# board_detect_and_select() sees registered=0. Forcing the whole archive in
+# board_select_configured() sees registered=0. Forcing the whole archive in
 # makes the objects present; the linker.lf KEEP() then protects them from GC.

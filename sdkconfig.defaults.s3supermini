@@ -28,8 +28,9 @@ CONFIG_SPIRAM_MODE_QUAD=y
 CONFIG_SPIRAM_SPEED_80M=y
 
 # ---- Board ----
-# Force-selected: the SuperMini and the NX both answer the same SSD1306 I2C
-# probe, so autodetect cannot tell them apart — and their pinouts share nothing.
+# This overlay is the SuperMini's, and the rest of it (4MB flash, quad PSRAM,
+# USB-Serial-JTAG console) only makes sense on that board, so it selects it.
+# The S3 default is the NX, whose pinout shares nothing with this one.
 CONFIG_AA_BOARD_LUGO_S3_SUPERMINI=y
 
 # ---- Console on native USB-Serial-JTAG ----
