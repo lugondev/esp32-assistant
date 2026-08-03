@@ -246,7 +246,7 @@ config AA_CUSTOM_DISP_RST
     int "ST7789 RST gpio"
     depends on AA_CUSTOM_DISP_AUTO
     range 0 48
-    default 2
+    default 11
 config AA_CUSTOM_DISP_BL
     int "ST7789 backlight gpio, or -1 if the panel LED is tied to 3V3"
     depends on AA_CUSTOM_DISP_AUTO
@@ -256,7 +256,7 @@ config AA_CUSTOM_DISP_BL
 config AA_CUSTOM_BTN_WAKE
     int "Wake button gpio (active low), or -1 if absent"
     range -1 48
-    default 7
+    default -1
 config AA_CUSTOM_BTN_VOL_UP
     int "Volume-up button gpio (active low), or -1 if absent"
     range -1 48
