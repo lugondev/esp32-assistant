@@ -106,6 +106,15 @@ config AA_BOARD_LUGO_C3_DEVKIT
 config AA_BOARD_LUGO_C3_SUPERMINI
     bool "Lugo C3 SuperMini (SSD1306 0.96in I2C + MAX98357A/INMP441 full-duplex I2S)"
     depends on IDF_TARGET_ESP32C3
+
+config AA_BOARD_CUSTOM
+    bool "Custom board — enter the pinout below (bring-up / new hardware)"
+    help
+        For hardware that has no board_def.c yet. Every pin comes from the
+        "Custom board pinout" menu below, so trying a new board needs no new
+        files. Once the pinout is proven, promote it to its own
+        components/boards/<name>/board_def.c — that file is where the reasons
+        behind each choice get written down, which this menu cannot hold.
 endchoice
 
 config AA_BOARD_NAME
@@ -115,6 +124,150 @@ config AA_BOARD_NAME
     default "lugo-s3-wroom" if AA_BOARD_LUGO_S3_WROOM
     default "lugo-c3-devkit" if AA_BOARD_LUGO_C3_DEVKIT
     default "lugo-c3-supermini" if AA_BOARD_LUGO_C3_SUPERMINI
+    default "lugo-custom" if AA_BOARD_CUSTOM
     default ""
+
+endmenu
+
+menu "Custom board pinout"
+    visible if AA_BOARD_CUSTOM
+
+# `visible if` rather than `depends on`: it hides the prompts for anyone
+# building a known board while leaving each symbol at its default value. With
+# `depends on`, an unmet dependency drives int symbols to 0 — and 0 is a real
+# GPIO, so a stray value would look like a deliberate pin rather than an unset
+# one.
+
+config AA_CUSTOM_MIC_WS
+    int "INMP441 mic I2S WS/LRCK gpio"
+    depends on IDF_TARGET_ESP32S3
+    range 0 48
+    default 4
+config AA_CUSTOM_MIC_SCK
+    int "INMP441 mic I2S SCK/BCLK gpio"
+    depends on IDF_TARGET_ESP32S3
+    range 0 48
+    default 5
+config AA_CUSTOM_MIC_SD
+    int "INMP441 mic I2S SD (data out from mic) gpio"
+    depends on IDF_TARGET_ESP32S3
+    range 0 48
+    default 6
+config AA_CUSTOM_MIC_RIGHT_SLOT
+    bool "INMP441 L/R is tied HIGH (mic drives the RIGHT I2S slot)"
+    depends on IDF_TARGET_ESP32S3
+    default n
+    help
+        Leave off when L/R goes to GND, which is the usual wiring. Turn it on
+        for a module with L/R tied to 3V3. Reading the wrong slot yields a
+        channel of pure zeros that looks exactly like a dead mic, so if the mic
+        is silent and the pins are confirmed, try the other setting.
+
+config AA_CUSTOM_SPK_BCLK
+    int "MAX98357A speaker I2S BCLK gpio"
+    depends on IDF_TARGET_ESP32S3
+    range 0 48
+    default 15
+config AA_CUSTOM_SPK_LRC
+    int "MAX98357A speaker I2S LRC/WS gpio"
+    depends on IDF_TARGET_ESP32S3
+    range 0 48
+    default 16
+config AA_CUSTOM_SPK_DIN
+    int "MAX98357A speaker I2S DIN (data into amp) gpio"
+    depends on IDF_TARGET_ESP32S3
+    range 0 48
+    default 7
+
+config AA_CUSTOM_FD_BCLK
+    int "Shared full-duplex I2S BCLK gpio (speaker's bit clock)"
+    depends on IDF_TARGET_ESP32C3
+    range 0 21
+    default 7
+config AA_CUSTOM_FD_WS
+    int "Shared full-duplex I2S WS gpio (speaker's word select)"
+    depends on IDF_TARGET_ESP32C3
+    range 0 21
+    default 3
+config AA_CUSTOM_FD_MIC_DATA
+    int "INMP441 SD (data in) gpio"
+    depends on IDF_TARGET_ESP32C3
+    range 0 21
+    default 10
+config AA_CUSTOM_FD_SPK_DATA
+    int "MAX98357A DIN (data out) gpio"
+    depends on IDF_TARGET_ESP32C3
+    range 0 21
+    default 6
+config AA_CUSTOM_FD_MIC_BCLK
+    int "Mic's own SCK gpio, or -1 if it shares the speaker's BCLK"
+    depends on IDF_TARGET_ESP32C3
+    range -1 21
+    default -1
+    help
+        The C3 has one I2S controller. When the mic is physically wired to its
+        own SCK/WS pins rather than tied to the speaker's, set these two and the
+        controller's clock is duplicated onto them through the GPIO matrix. Set
+        both to -1 when the mic shares the speaker's clock pins.
+config AA_CUSTOM_FD_MIC_WS
+    int "Mic's own WS gpio, or -1 if it shares the speaker's WS"
+    depends on IDF_TARGET_ESP32C3
+    range -1 21
+    default -1
+
+choice AA_CUSTOM_DISP
+    prompt "Display this board can carry"
+    default AA_CUSTOM_DISP_SSD1306
+
+config AA_CUSTOM_DISP_AUTO
+    bool "Either — probe I2C for an SSD1306, else drive an ST7789 on the same pins"
+config AA_CUSTOM_DISP_SSD1306
+    bool "SSD1306 only (I2C OLED)"
+config AA_CUSTOM_DISP_NONE
+    bool "No display"
+endchoice
+
+config AA_CUSTOM_DISP_CLK
+    int "Display SCL (SSD1306) / SCLK (ST7789) gpio"
+    depends on !AA_CUSTOM_DISP_NONE
+    range 0 48
+    default 2
+config AA_CUSTOM_DISP_DAT
+    int "Display SDA (SSD1306) / MOSI (ST7789) gpio"
+    depends on !AA_CUSTOM_DISP_NONE
+    range 0 48
+    default 13
+config AA_CUSTOM_DISP_DC
+    int "ST7789 DC gpio"
+    depends on AA_CUSTOM_DISP_AUTO
+    range 0 48
+    default 1
+config AA_CUSTOM_DISP_RST
+    int "ST7789 RST gpio"
+    depends on AA_CUSTOM_DISP_AUTO
+    range 0 48
+    default 2
+config AA_CUSTOM_DISP_BL
+    int "ST7789 backlight gpio, or -1 if the panel LED is tied to 3V3"
+    depends on AA_CUSTOM_DISP_AUTO
+    range -1 48
+    default -1
+
+config AA_CUSTOM_BTN_WAKE
+    int "Wake button gpio (active low), or -1 if absent"
+    range -1 48
+    default 7
+config AA_CUSTOM_BTN_VOL_UP
+    int "Volume-up button gpio (active low), or -1 if absent"
+    range -1 48
+    default -1
+config AA_CUSTOM_BTN_VOL_DOWN
+    int "Volume-down button gpio (active low), or -1 if absent"
+    range -1 48
+    default -1
+config AA_CUSTOM_BTN_EMOTION
+    int "Emotion button gpio (active low), or -1 if absent"
+    range -1 48
+    default -1
 
 endmenu
