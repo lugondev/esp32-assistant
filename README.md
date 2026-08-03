@@ -79,6 +79,10 @@ idf.py set-target esp32s3   # or: idf.py set-target esp32c3
 idf.py menuconfig
 ```
 
+Pick your board under **Target board**. For hardware with no board definition
+yet, choose *Custom board* and enter the pinout — see
+[docs/custom-board.md](docs/custom-board.md).
+
 Navigate to **"Assistant configuration"** and set:
 
 WiFi credentials are no longer set here — see **WiFi provisioning** below. STT
