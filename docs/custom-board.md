@@ -14,10 +14,18 @@ Under **Target board**, pick *Custom board*. A **Custom board pinout** menu
 appears below; enter the GPIOs you actually wired. Then build and flash as
 usual.
 
-If the mic is silent and the pins are confirmed correct, try toggling
-*INMP441 L/R is tied HIGH (mic drives the RIGHT I2S slot)*. Reading the wrong
-I2S slot returns a channel of pure zeros, which looks exactly like a dead
+**ESP32-S3 only:** if the mic is silent and the pins are confirmed correct, try
+toggling *INMP441 L/R is tied HIGH (mic drives the RIGHT I2S slot)*. Reading the
+wrong I2S slot returns a channel of pure zeros, which looks exactly like a dead
 microphone.
+
+That option does not exist on the ESP32-C3 — don't go looking for it in the
+menu. `CONFIG_AA_CUSTOM_MIC_RIGHT_SLOT` is `depends on IDF_TARGET_ESP32S3`
+because the C3's full-duplex driver (`i2s_fd_cfg_t`, in
+`components/audio/include/i2s_fd.h`) has no slot-select field at all. On a C3
+custom board the only fix for a right-slot module is to wire the INMP441's L/R
+pin to GND; adding the option properly means changing the audio component, and
+that needs hardware to validate.
 
 `CONFIG_AA_MIC_METER` (under the project's own menu) renders the mic's peak
 level on the panel, which separates "mic produces nothing" from "the rest of

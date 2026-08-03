@@ -898,26 +898,33 @@ Expected: `1` (it was `3` before this task).
 
 - [ ] **Step 4: Verify a wrong name fails at configure time**
 
-Run:
+`CONFIG_AA_BOARD_NAME` is promptless and derived from `choice AA_BOARD`, so `sed`-ing a bogus value into `build-one/sdkconfig` does **not** work — Kconfig regenerates the symbol from the choice on the next `reconfigure` and the check silently passes. Make the *directory* the thing that's missing instead:
+
 ```bash
-sed -i.bak 's/^CONFIG_AA_BOARD_NAME=.*/CONFIG_AA_BOARD_NAME="lugo-nonexistent"/' build-one/sdkconfig && \
-idf.py -B build-one -DSDKCONFIG=build-one/sdkconfig reconfigure 2>&1 | tail -20
+(
+  set -e
+  trap 'mv components/boards/lugo_s3_nx_TEMPMOVED components/boards/lugo_s3_nx' EXIT
+  mv components/boards/lugo_s3_nx components/boards/lugo_s3_nx_TEMPMOVED
+  idf.py -B build-one -DSDKCONFIG=build-one/sdkconfig reconfigure 2>&1 | tail -20
+)
 ```
-Expected: a CMake error naming `components/boards/lugo_nonexistent/board_def.c`. Restore with `mv build-one/sdkconfig.bak build-one/sdkconfig`.
+Expected: a CMake error `Cannot find source file: .../components/boards/lugo_s3_nx/board_def.c`. The `trap ... EXIT` restores the directory even when `reconfigure` fails, which it is supposed to do here.
 
 - [ ] **Step 5: Verify every board still builds**
 
 Run each of these, and the same for esp32c3 with `lugo-c3-devkit`, `lugo-c3-supermini` and `lugo-custom`:
 
+Select each board through its `choice AA_BOARD` symbol, not through `CONFIG_AA_BOARD_NAME` — that one is promptless and derived, and Kconfig overwrites any value written to it (see Step 4):
+
 ```bash
-for b in lugo-s3-nx lugo-s3-supermini lugo-s3-wroom; do
+for b in AA_BOARD_LUGO_S3_NX AA_BOARD_LUGO_S3_SUPERMINI AA_BOARD_LUGO_S3_WROOM; do
   rm -rf build-each && \
   idf.py -B build-each -DSDKCONFIG=build-each/sdkconfig set-target esp32s3 && \
-  sed -i.bak "s/^CONFIG_AA_BOARD_NAME=.*/CONFIG_AA_BOARD_NAME=\"$b\"/" build-each/sdkconfig && \
+  echo "CONFIG_$b=y" >> build-each/sdkconfig && \
   idf.py -B build-each -DSDKCONFIG=build-each/sdkconfig reconfigure build || { echo "FAILED: $b"; break; }
 done
 ```
-Expected: all three build. Note `CONFIG_AA_BOARD_NAME` is a hidden string derived from the choice, so setting the corresponding `CONFIG_AA_BOARD_LUGO_*=y` is the equivalent through menuconfig.
+Expected: all three build, and `grep CONFIG_AA_BOARD_NAME build-each/sdkconfig` shows the matching name each time — check it, since a choice symbol that failed to take would silently leave the previous board selected.
 
 - [ ] **Step 6: Run the full host test suite**
 

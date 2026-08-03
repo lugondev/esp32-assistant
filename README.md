@@ -37,7 +37,9 @@ its own mic/speaker/display/button pins, so you pick a board instead of hand-edi
 | `lugo-c3-devkit` | `AA_BOARD_LUGO_C3_DEVKIT` | ESP32-C3-DevKitM-1, single-I2S simplex audio |
 | `lugo-s3-nx` | `AA_BOARD_LUGO_S3_NX` | ESP32-S3 N-series modules (N16R8 / N8R8 …), dual-I2S audio |
 | `lugo-s3-supermini` | `AA_BOARD_LUGO_S3_SUPERMINI` | ESP32-S3FH4R2 SuperMini, 4MB flash + 2MB **quad** PSRAM, dual-I2S audio — see [docs/s3-supermini.md](docs/s3-supermini.md) |
-| `lugo-c3-supermini` / `lugo-s3-wroom` | *(opt-in)* | foundation boards |
+| `lugo-c3-supermini` | `AA_BOARD_LUGO_C3_SUPERMINI` | ESP32-C3 SuperMini, single-I2S simplex audio — foundation board |
+| `lugo-s3-wroom` | `AA_BOARD_LUGO_S3_WROOM` | ESP32-S3-WROOM, camera-capable — foundation board, placeholder pins |
+| `lugo-custom` | `AA_BOARD_CUSTOM` | no `board_def.c` of its own: every pin comes from `CONFIG_AA_CUSTOM_*` in menuconfig, for bringing up new hardware — see [docs/custom-board.md](docs/custom-board.md) |
 
 Pins live in each board's `board_def.c`. Current defaults:
 
