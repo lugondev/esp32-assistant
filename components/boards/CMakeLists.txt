@@ -1,9 +1,17 @@
-# NOTE: CONFIGURE_DEPENDS is intentionally omitted. ESP-IDF parses this file in
-# CMake "script mode" during its requirements-extraction pass, and script mode
-# rejects file(GLOB ... CONFIGURE_DEPENDS). The plain glob still auto-discovers
-# every components/boards/<name>/board_def.c; adding a new board folder just
-# needs a one-time `idf.py reconfigure` (or `fullclean`) to re-run the glob.
-file(GLOB BOARD_SRCS "${CMAKE_CURRENT_SOURCE_DIR}/*/board_def.c")
+# Only the selected board is compiled. The directory name is CONFIG_AA_BOARD_NAME
+# with dashes swapped for underscores ("lugo-s3-nx" -> "lugo_s3_nx"), so a board
+# name with no matching directory fails here, at configure time, naming the path
+# it could not find — rather than building fine and failing at boot.
+#
+# The else branch is for ESP-IDF's requirements-extraction pass, which parses
+# this file in CMake script mode where no CONFIG_* is defined yet. SRCS is
+# ignored in that pass; the glob just gives it something well-formed.
+if(CONFIG_AA_BOARD_NAME)
+    string(REPLACE "-" "_" _board_dir "${CONFIG_AA_BOARD_NAME}")
+    set(BOARD_SRCS "${CMAKE_CURRENT_SOURCE_DIR}/${_board_dir}/board_def.c")
+else()
+    file(GLOB BOARD_SRCS "${CMAKE_CURRENT_SOURCE_DIR}/*/board_def.c")
+endif()
 idf_component_register(
     SRCS ${BOARD_SRCS}
     # board_common.h lives here, next to the per-board subdirectories that
