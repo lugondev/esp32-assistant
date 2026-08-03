@@ -1238,7 +1238,7 @@ static void show_boot_color_bars(void) {
 void app_main(void) {
     ESP_LOGI(TAG, "esp32-assistant booting");
     robot_eyes_set_glow_pct(0);   // borderless eyes — no glow halo
-    ESP_ERROR_CHECK(board_detect_and_select());
+    ESP_ERROR_CHECK(board_select_configured());
     // Non-fatal: a missing/miswired panel must not boot-loop the device. The
     // driver runs headless (show/flush become no-ops) so audio/WiFi still come
     // up. See ssd1306_init's i2c scan log to diagnose the panel.

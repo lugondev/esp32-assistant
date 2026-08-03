@@ -39,8 +39,6 @@ static const buttons_gpio_cfg_t buttons_cfg = {
 LUGO_RESERVED_PINS(PIN_DISP_CLK, PIN_DISP_DAT, PIN_DISP_DC, PIN_DISP_RST,
                    PIN_BTN_WAKE);
 
-static bool match(void) { return true; }  // Kconfig-forced; the active C3 board
-
 LUGO_BOARD_REGISTER(board_lugo_c3_devkit) {
     .name        = "lugo-c3-devkit",
     .mic         = &i2s_fd_mic_ops,
@@ -52,7 +50,6 @@ LUGO_BOARD_REGISTER(board_lugo_c3_devkit) {
     .display_cfg = &display_cfg,
     .buttons_cfg = &buttons_cfg,
     LUGO_BOARD_RESERVED_PINS,
-    .match       = match,
 };
 
 #endif // CONFIG_IDF_TARGET_ESP32C3

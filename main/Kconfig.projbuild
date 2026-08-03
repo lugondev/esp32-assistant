@@ -104,7 +104,8 @@ config AA_SKIP_AUDIO_INIT
 
 choice AA_BOARD
     prompt "Target board"
-    default AA_BOARD_AUTODETECT
+    default AA_BOARD_LUGO_S3_NX if IDF_TARGET_ESP32S3
+    default AA_BOARD_LUGO_C3_DEVKIT if IDF_TARGET_ESP32C3
 
 config AA_BOARD_LUGO_S3_NX
     bool "Lugo S3 NX — N-series modules N16R8/N8R8 (auto SSD1306/ST7789 + MAX98357A/INMP441 dual-I2S)"
@@ -125,14 +126,7 @@ config AA_BOARD_LUGO_C3_DEVKIT
 config AA_BOARD_LUGO_C3_SUPERMINI
     bool "Lugo C3 SuperMini (SSD1306 0.96in I2C + MAX98357A/INMP441 full-duplex I2S)"
     depends on IDF_TARGET_ESP32C3
-
-config AA_BOARD_AUTODETECT
-    bool "Auto-detect (multi-board single binary)"
 endchoice
-
-config AA_BOARD_FORCE
-    bool
-    default y if !AA_BOARD_AUTODETECT
 
 config AA_BOARD_NAME
     string

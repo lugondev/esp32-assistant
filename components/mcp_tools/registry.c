@@ -11,7 +11,7 @@ extern const mcp_tool_desc_t *const _mcp_tool_end[];
 //
 // There is deliberately no mcp_tools_init(): the registry is populated at link
 // time by the "mcp_tool" section, so there is nothing to initialize. One
-// existed "for symmetry with board_detect_and_select()" and was never called
+// existed "for symmetry with board_select_configured()" and was never called
 // by anything.
 
 int mcp_tools_dispatch(const char *mcp_payload, char *out_buf, int out_cap) {

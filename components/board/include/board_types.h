@@ -130,5 +130,4 @@ typedef struct board {
     // its peripherals unprotected — prefer an explicit list.
     const int           *reserved_pins;
     int                  n_reserved_pins;
-    bool               (*match)(void); // true if firmware is running on this board
 } board_t;

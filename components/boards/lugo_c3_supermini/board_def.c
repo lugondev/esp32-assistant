@@ -7,7 +7,7 @@
 // ESP32-C3 SuperMini: same wiring as the DevKitM-1 build (MAX98357A + INMP441 on
 // the single full-duplex I2S, panel auto-detected, wake GPIO0) but on a compact
 // board with a KNOWN-WEAK PCB antenna (RX ok, TX crippled — see docs/). Selected
-// only via Kconfig (match() returns false), so the DevKitM-1 stays the C3 default.
+// only via Kconfig.
 //
 // SuperMini pin notes: GPIO8 = onboard LED (active-low), GPIO9 = BOOT button,
 // GPIO2/8/9 strapping, GPIO18/19 = USB (not broken out).
@@ -33,8 +33,6 @@ static const buttons_gpio_cfg_t buttons_cfg = {
 LUGO_RESERVED_PINS(PIN_DISP_CLK, PIN_DISP_DAT, PIN_DISP_DC, PIN_DISP_RST,
                    PIN_BTN_WAKE);
 
-static bool match(void) { return false; }  // opt-in via CONFIG_AA_BOARD_LUGO_C3_SUPERMINI
-
 LUGO_BOARD_REGISTER(board_lugo_c3_supermini) {
     .name        = "lugo-c3-supermini",
     .mic         = &i2s_fd_mic_ops,
@@ -46,7 +44,6 @@ LUGO_BOARD_REGISTER(board_lugo_c3_supermini) {
     .display_cfg = &display_cfg,
     .buttons_cfg = &buttons_cfg,
     LUGO_BOARD_RESERVED_PINS,
-    .match       = match,
 };
 
 #endif // CONFIG_IDF_TARGET_ESP32C3

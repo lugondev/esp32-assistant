@@ -8,17 +8,12 @@ extern const board_t *const _board_desc_end[];
 
 static const char *TAG = "board";
 
-esp_err_t board_detect_and_select(void) {
+esp_err_t board_select_configured(void) {
     int n = (int)(_board_desc_end - _board_desc_start);
-#ifdef CONFIG_AA_BOARD_FORCE
-    const char *forced = CONFIG_AA_BOARD_NAME;   // e.g. "lugo-s3-nx"
-#else
-    const char *forced = NULL;                    // auto-detect via match()
-#endif
-    const board_t *b = board_select(_board_desc_start, n, forced);
+    const board_t *b = board_select(_board_desc_start, n, CONFIG_AA_BOARD_NAME);
     if (b == NULL) {
-        ESP_LOGE(TAG, "no board selected (registered=%d, forced=%s)",
-                 n, forced ? forced : "auto");
+        ESP_LOGE(TAG, "no board named \"%s\" among %d registered",
+                 CONFIG_AA_BOARD_NAME, n);
         return ESP_ERR_NOT_FOUND;
     }
     board_set(b);

@@ -8,8 +8,7 @@
 // ESP32-S3 SuperMini: a compact S3 board (ESP32-S3FH4R2 — 4MB in-package flash,
 // 2MB QUAD PSRAM), carrying the same peripherals as lugo-s3-nx (MAX98357A +
 // INMP441 on dual I2S, SSD1306 OLED) but on its own, much tighter pinout.
-// Selected only via CONFIG_AA_BOARD_LUGO_S3_SUPERMINI (match() returns false),
-// so the NX stays the S3 autodetect default. See docs/s3-supermini.md.
+// Selected via CONFIG_AA_BOARD_LUGO_S3_SUPERMINI. See docs/s3-supermini.md.
 //
 // SuperMini pin notes: only TX/RX + GP1-GP13 are broken out. GPIO0/45/46 (the
 // S3 strapping pins that matter) are NOT on the header, so nothing here can
@@ -77,8 +76,6 @@ static const buttons_gpio_cfg_t buttons_cfg = {
 // omitted on purpose — the I2S driver reserves those itself.
 LUGO_RESERVED_PINS(PIN_DISP_CLK, PIN_DISP_DAT, PIN_BTN_WAKE);
 
-static bool match(void) { return false; }  // opt-in via CONFIG_AA_BOARD_LUGO_S3_SUPERMINI
-
 LUGO_BOARD_REGISTER(board_lugo_s3_supermini) {
     .name        = "lugo-s3-supermini",
     .mic         = &i2s_mic_ops,
@@ -90,7 +87,6 @@ LUGO_BOARD_REGISTER(board_lugo_s3_supermini) {
     .display_cfg = &display_cfg,
     .buttons_cfg = &buttons_cfg,
     LUGO_BOARD_RESERVED_PINS,
-    .match       = match,
 };
 
 #endif // CONFIG_IDF_TARGET_ESP32S3

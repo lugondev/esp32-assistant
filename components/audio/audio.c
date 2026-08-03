@@ -3,7 +3,7 @@
 #include "sdkconfig.h"
 
 // Dispatch the combined app-facing audio API to the board's independent mic and
-// speaker drivers. board_detect_and_select() must run (app_main) before audio_init().
+// speaker drivers. board_select_configured() must run (app_main) before audio_init().
 static const mic_ops_t     *s_mic;
 static const speaker_ops_t *s_spk;
 

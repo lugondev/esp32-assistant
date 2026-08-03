@@ -7,7 +7,7 @@
 
 // FOUNDATION / PLACEHOLDER — an ESP32-S3-WROOM board that will additionally
 // carry a CAMERA. Fill in the real GPIOs when the board exists. Selected only
-// via CONFIG_AA_BOARD_LUGO_S3_WROOM (match() returns false).
+// via CONFIG_AA_BOARD_LUGO_S3_WROOM.
 //
 // CAMERA (TODO): add a `.camera` facade to board_t (a camera_ops_t + camera_cfg,
 // modelled on the existing `.battery` facade — NULL when a board has no camera),
@@ -45,8 +45,6 @@ LUGO_RESERVED_PINS(PIN_DISP_CLK, PIN_DISP_DAT, PIN_DISP_DC, PIN_DISP_RST,
                    PIN_DISP_BL, PIN_BTN_WAKE, PIN_BTN_VOL_UP,
                    PIN_BTN_VOL_DOWN);
 
-static bool match(void) { return false; }  // opt-in via CONFIG_AA_BOARD_LUGO_S3_WROOM
-
 LUGO_BOARD_REGISTER(board_lugo_s3_wroom) {
     .name        = "lugo-s3-wroom",
     .mic         = &i2s_mic_ops,
@@ -58,7 +56,6 @@ LUGO_BOARD_REGISTER(board_lugo_s3_wroom) {
     .display_cfg = &display_cfg,
     .buttons_cfg = &buttons_cfg,
     LUGO_BOARD_RESERVED_PINS,
-    .match       = match,
 };
 
 #endif // CONFIG_IDF_TARGET_ESP32S3

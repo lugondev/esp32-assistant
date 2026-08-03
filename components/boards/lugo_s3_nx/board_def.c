@@ -48,8 +48,6 @@ LUGO_RESERVED_PINS(PIN_DISP_CLK, PIN_DISP_DAT, PIN_DISP_DC, PIN_DISP_RST,
                    PIN_DISP_BL, PIN_BTN_WAKE, PIN_BTN_VOL_UP,
                    PIN_BTN_VOL_DOWN, PIN_BTN_EMOTION);
 
-static bool match(void) { return true; }  // the S3 autodetect default
-
 LUGO_BOARD_REGISTER(board_lugo_s3_nx) {
     .name        = "lugo-s3-nx",
     .mic         = &i2s_mic_ops,
@@ -61,7 +59,6 @@ LUGO_BOARD_REGISTER(board_lugo_s3_nx) {
     .display_cfg = &display_cfg,
     .buttons_cfg = &buttons_cfg,
     LUGO_BOARD_RESERVED_PINS,
-    .match       = match,
 };
 
 #endif // CONFIG_IDF_TARGET_ESP32S3
