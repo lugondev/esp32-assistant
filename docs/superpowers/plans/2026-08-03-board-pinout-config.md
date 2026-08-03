@@ -584,6 +584,20 @@ config AA_CUSTOM_DISP_NONE
     bool "No display"
 endchoice
 
+> **The display and button block below is WRONG as written — do not copy it.**
+> It gives every symbol a single `range 0 48` and one default for both SoCs,
+> which is an ESP32-S3 shape. On ESP32-C3 that put `DISP_DAT` on GPIO13 (an
+> in-package SPI flash pin) and `DISP_RST` on GPIO11 (VDD_SPI), so a default C3
+> build would have probed I2C on a live flash line at boot. It also sets
+> `DISP_RST` to 2, colliding with `DISP_CLK`. The shipped version in
+> `main/Kconfig.projbuild` splits every default and range per target
+> (`... if IDF_TARGET_ESP32S3` / `... if IDF_TARGET_ESP32C3`) — read it, not this.
+> Kept here unaltered as the record of what was originally planned.
+>
+> The lesson worth carrying: a pin default needs a per-SoC **validity** check,
+> not just a uniqueness check against the other defaults. Uniqueness was the
+> only check applied here, and it missed this twice.
+
 config AA_CUSTOM_DISP_CLK
     int "Display SCL (SSD1306) / SCLK (ST7789) gpio"
     depends on !AA_CUSTOM_DISP_NONE
