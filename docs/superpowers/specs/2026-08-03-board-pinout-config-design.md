@@ -17,6 +17,11 @@ Three things prompted this work:
 2. Trying a new board should not require creating files.
 3. The binary should not carry boards it will never run.
 
+A fourth item surfaced while investigating and is folded in: a half-finished
+version of (1) already exists and is broken — `lugo-s3-nx` and `lugo-s3-wroom`
+share one global set of mic/speaker pin symbols and so cannot be given
+different pinouts. See Part 1.
+
 ## What the measurements say
 
 Before designing around (3), it was measured. In `build-s3sm`, the linker map
@@ -117,6 +122,27 @@ absent buttons need no gating.
 (C3), and the optional ones `range -1 N`. This is validation the current
 `#define` approach does not have.
 
+**Reclaiming the existing global pin symbols.** `AA_MIC_WS/SCK/SD` and
+`AA_SPK_BCLK/LRC/DIN` already exist (`Kconfig.projbuild:36-54`), and both
+`lugo_s3_nx/board_def.c:15,18` and `lugo_s3_wroom/board_def.c:18,21` read them.
+This is a half-finished version of the idea, and it is actively broken: the
+symbols are global, so those two boards **cannot have different mic or speaker
+pins**. Changing one to suit the other silently breaks the other — the "one
+sdkconfig value per build" problem, already present in the tree.
+
+Nothing overrides them today. Every `sdkconfig*` file in the repo carries the
+same defaults (`4/5/6`, `15/16/7`), and no other translation unit reads them, so
+the migration is mechanical:
+
+- Rename to `AA_CUSTOM_MIC_*` / `AA_CUSTOM_SPK_*` and move them inside the
+  `visible if AA_BOARD_CUSTOM` menu, where per-build-single-value is correct
+  because only one board ever reads them.
+- `lugo-s3-nx` gets the current default values as literals — `4/5/6` mic,
+  `15/16/7` speaker — which are its real pins.
+- `lugo-s3-wroom` gets the same values as literals, labelled placeholder,
+  matching how its display pins are already `PLACEHOLDER (copied from
+  lugo-s3-nx)`. The board is a foundation with no hardware behind it yet.
+
 **The lifecycle this enables.** New hardware runs on `lugo-custom` and is tuned
 in menuconfig until it works. Once it works, it gets *promoted* to its own
 `board_def.c` — and that file is where the hard-won knowledge is written down.
@@ -208,6 +234,41 @@ in fact rebuilds *more* — `sdkconfig.h` is included nearly everywhere, whereas
 menuconfig UI and `range` validation, and those matter precisely when there is
 no `board_def.c` yet — which is what Part 1 provides.
 
+**Auto-detect the peripherals instead of the board** — probe for the MAX98357A
+and the INMP441 and derive the pinout from what answers. This was considered as
+a way to keep a real `match()` rather than deleting it. It does not work, for
+two different reasons.
+
+*The MAX98357A cannot be detected at all.* Every digital pin it has — LRC,
+BCLK, DIN, GAIN, SD_MODE — is an input; its only output is analogue, to the
+speaker. There is no I2C, no readback, no signal path of any kind back to the
+ESP32. No software can observe whether it is present. The one indirect route is
+playing a tone and listening on the mic, which confirms "sound happened in the
+room", not "a MAX98357A is on these three pins" — and it presupposes a working
+mic, i.e. the other half of what you wanted to detect.
+
+*The INMP441 is partly detectable, but not in the way that would help.* It
+drives SD, so there is a return path, and two things genuinely fall out of a
+stereo capture: **which slot it drives** (`right_slot` — this is exactly the
+hand measurement that solved the SuperMini, `|L|max=0` vs
+`|R|max=0x01a78400`), and **whether any mic is responding at all** on a known
+pin set. But it cannot identify the part — an ICS-43434 or SPH0645 looks
+identical — and it cannot discover pins, because probing requires already
+knowing which pins to drive. Scanning blind is ~6840 WS×SCK×SD combinations
+across ~20 GPIOs, each needing an I2S init/teardown, while driving clocks onto
+pins that may be wired to something else.
+
+That last point is what closes the question: board selection exists to
+determine the pinout, and every available probe needs the pinout as an input.
+The dependency runs the wrong way, so Part 2 stands.
+
+A narrower idea — a bring-up-only `right_slot` probe, in the spirit of the
+existing `CONFIG_AA_MIC_METER` — was raised and **deliberately declined**.
+`right_slot` stays hand-declared. It is a soldering fact that never changes
+after a board is built, `AA_MIC_METER` already answers "is the mic producing
+anything", and the slot itself is cheap enough to determine by hand on the rare
+occasion it is wrong. Recorded here so the idea does not get re-proposed as new.
+
 **Drop the `board_desc` section registry entirely** (have each board export a
 known symbol, deleting `linker.lf`, `WHOLE_ARCHIVE`, and `board_select.c`).
 Tempting once only one board is compiled, but it buys nothing Part 3 has not
@@ -237,6 +298,17 @@ a fresh build directory:
 
 Plus one negative check: an `AA_BOARD_NAME` pointing at a nonexistent directory
 must fail at configure time, confirming Part 3's stated benefit.
+
+**Pin-migration equivalence.** Moving `lugo-s3-nx` off the global
+`AA_MIC_*`/`AA_SPK_*` symbols must not change a single pin. Build `lugo-s3-nx`
+before and after, and confirm the `.rodata.mic_cfg` and `.rodata.spk_cfg` bytes
+in `esp32-assistant.map` are identical. A refactor that silently moves the NX's
+mic to a different GPIO would present exactly as the silent-mic failure this
+tree has already spent a day on.
+
+Also confirm no `CONFIG_AA_MIC_*` / `CONFIG_AA_SPK_*` remains in any generated
+`sdkconfig*` after the rename, so a stale value cannot be mistaken for a live
+setting.
 
 **Hardware verification.** The S3 SuperMini is the unit on hand. Build it twice —
 once as `lugo-s3-supermini`, once as `lugo-custom` with the same pins entered in
