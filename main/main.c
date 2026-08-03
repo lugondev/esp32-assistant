@@ -352,6 +352,10 @@ static void mic_meter_task(void *arg) {
         char level[32];
         snprintf(level, sizeof level, "g %d p %d", s_mic_got, s_mic_peak);
         if (s_status_q) status_push(false, ROBOT_EMOTION_NEUTRAL, "Mic level", level);
+        // Also to the console: the OLED alone means bring-up evidence has to be
+        // read off the panel and relayed by hand. With a serial console attached
+        // this is the same two numbers in a form that can be logged and diffed.
+        ESP_LOGI(TAG, "mic meter: got=%d peak=%d", s_mic_got, s_mic_peak);
         vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
