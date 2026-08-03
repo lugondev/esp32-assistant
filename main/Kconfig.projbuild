@@ -107,6 +107,13 @@ config AA_BOARD_LUGO_C3_SUPERMINI
     bool "Lugo C3 SuperMini (SSD1306 0.96in I2C + MAX98357A/INMP441 full-duplex I2S)"
     depends on IDF_TARGET_ESP32C3
 
+# Deliberately no `depends on IDF_TARGET_*`, unlike every other entry above.
+# That asymmetry is intentional: on a target we do not support yet, adding one
+# would hide every entry in this choice, AA_BOARD_NAME would fall through to
+# "", and components/boards/CMakeLists.txt would glob-build every board,
+# register none, and fail at boot with registered=0. Visible-everywhere instead
+# means such a target selects lugo-custom and hits its #error at compile time,
+# which is the right diagnostic at the right moment. Do not "fix" this.
 config AA_BOARD_CUSTOM
     bool "Custom board — enter the pinout below (bring-up / new hardware)"
     help
@@ -227,47 +234,69 @@ config AA_CUSTOM_DISP_NONE
     bool "No display"
 endchoice
 
+# Display and button pins are the same symbols on both targets (unlike the
+# audio pins above, which are split by `depends on IDF_TARGET_*`), so their
+# ranges and defaults have to be split per target instead. The C3 tops out at
+# GPIO21, and its GPIO12-17 are the in-package SPI flash bus (GPIO11 is
+# VDD_SPI) — an S3 default inherited unchanged would have the display probe
+# reconfigure a live flash pin at boot. The C3 defaults below are the wiring
+# both real C3 boards use (lugo_c3_devkit, lugo_c3_supermini); DC/RST land on
+# GPIO20/21, which is only free because those boards put the console on the
+# native USB-Serial-JTAG rather than UART0.
 config AA_CUSTOM_DISP_CLK
     int "Display SCL (SSD1306) / SCLK (ST7789) gpio"
     depends on !AA_CUSTOM_DISP_NONE
-    range 0 48
-    default 2
+    range 0 48 if IDF_TARGET_ESP32S3
+    range 0 21 if IDF_TARGET_ESP32C3
+    default 2 if IDF_TARGET_ESP32S3
+    default 5 if IDF_TARGET_ESP32C3
 config AA_CUSTOM_DISP_DAT
     int "Display SDA (SSD1306) / MOSI (ST7789) gpio"
     depends on !AA_CUSTOM_DISP_NONE
-    range 0 48
-    default 13
+    range 0 48 if IDF_TARGET_ESP32S3
+    range 0 21 if IDF_TARGET_ESP32C3
+    default 13 if IDF_TARGET_ESP32S3
+    default 4 if IDF_TARGET_ESP32C3
 config AA_CUSTOM_DISP_DC
     int "ST7789 DC gpio"
     depends on AA_CUSTOM_DISP_AUTO
-    range 0 48
-    default 1
+    range 0 48 if IDF_TARGET_ESP32S3
+    range 0 21 if IDF_TARGET_ESP32C3
+    default 1 if IDF_TARGET_ESP32S3
+    default 20 if IDF_TARGET_ESP32C3
 config AA_CUSTOM_DISP_RST
     int "ST7789 RST gpio"
     depends on AA_CUSTOM_DISP_AUTO
-    range 0 48
-    default 11
+    range 0 48 if IDF_TARGET_ESP32S3
+    range 0 21 if IDF_TARGET_ESP32C3
+    default 11 if IDF_TARGET_ESP32S3
+    default 21 if IDF_TARGET_ESP32C3
 config AA_CUSTOM_DISP_BL
     int "ST7789 backlight gpio, or -1 if the panel LED is tied to 3V3"
     depends on AA_CUSTOM_DISP_AUTO
-    range -1 48
+    range -1 48 if IDF_TARGET_ESP32S3
+    range -1 21 if IDF_TARGET_ESP32C3
     default -1
 
 config AA_CUSTOM_BTN_WAKE
     int "Wake button gpio (active low), or -1 if absent"
-    range -1 48
+    range -1 48 if IDF_TARGET_ESP32S3
+    range -1 21 if IDF_TARGET_ESP32C3
     default -1
 config AA_CUSTOM_BTN_VOL_UP
     int "Volume-up button gpio (active low), or -1 if absent"
-    range -1 48
+    range -1 48 if IDF_TARGET_ESP32S3
+    range -1 21 if IDF_TARGET_ESP32C3
     default -1
 config AA_CUSTOM_BTN_VOL_DOWN
     int "Volume-down button gpio (active low), or -1 if absent"
-    range -1 48
+    range -1 48 if IDF_TARGET_ESP32S3
+    range -1 21 if IDF_TARGET_ESP32C3
     default -1
 config AA_CUSTOM_BTN_EMOTION
     int "Emotion button gpio (active low), or -1 if absent"
-    range -1 48
+    range -1 48 if IDF_TARGET_ESP32S3
+    range -1 21 if IDF_TARGET_ESP32C3
     default -1
 
 endmenu
