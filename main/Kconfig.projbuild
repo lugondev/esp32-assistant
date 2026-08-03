@@ -111,7 +111,7 @@ config AA_BOARD_LUGO_S3_NX
     depends on IDF_TARGET_ESP32S3
 
 config AA_BOARD_LUGO_S3_SUPERMINI
-    bool "Lugo S3 SuperMini (auto display) [placeholder pins]"
+    bool "Lugo S3 SuperMini — ESP32-S3FH4R2, 4MB flash + 2MB quad PSRAM (SSD1306 I2C + MAX98357A/INMP441 dual-I2S)"
     depends on IDF_TARGET_ESP32S3
 
 config AA_BOARD_LUGO_S3_WROOM

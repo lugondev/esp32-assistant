@@ -36,7 +36,8 @@ display/button pins, so you pick a board instead of editing global pin defaults.
 |-------|---------------------|-------|
 | `lugo-c3-devkit` | `AA_BOARD_LUGO_C3_DEVKIT` | ESP32-C3-DevKitM-1, single-I2S simplex audio |
 | `lugo-s3-nx` | `AA_BOARD_LUGO_S3_NX` | ESP32-S3 N-series modules (N16R8 / N8R8 …), dual-I2S audio |
-| `lugo-c3-supermini` / `lugo-s3-supermini` / `lugo-s3-wroom` | *(opt-in)* | foundation boards |
+| `lugo-s3-supermini` | `AA_BOARD_LUGO_S3_SUPERMINI` | ESP32-S3FH4R2 SuperMini, 4MB flash + 2MB **quad** PSRAM, dual-I2S audio — see [docs/s3-supermini.md](docs/s3-supermini.md) |
+| `lugo-c3-supermini` / `lugo-s3-wroom` | *(opt-in)* | foundation boards |
 
 Pins live in each board's `board_def.c`. Current defaults:
 
@@ -52,6 +53,13 @@ MAX98357A BCLK→GPIO15, LRC→GPIO16, DIN→GPIO7; display SCL/SDA (or SCLK/MOS
 
 ![S3 NX wiring — SSD1306](img/s3-nx-oled-ssd1306.png)
 ![S3 NX wiring — ST77xx](img/s3-nx-st77xx.png)
+
+**ESP32-S3 SuperMini (`lugo-s3-supermini`)** — INMP441 SCK→GPIO5, WS→GPIO8, SD→GPIO6, L/R→**3V3**
+(this board reads the *right* I2S slot, `mic_cfg.right_slot = true`);
+MAX98357A BCLK→GPIO44 (the `RX` header pin), LRC→GPIO1, DIN→GPIO12; SSD1306 SCL→GPIO2, SDA→GPIO13;
+wake button→GPIO7. **GPIO4 is unusable** (shorted to ground on the bring-up unit). SSD1306 only
+(no ST7789 option). Needs its own sdkconfig overlay for the 4MB/quad-PSRAM module —
+see [docs/s3-supermini.md](docs/s3-supermini.md).
 
 ---
 
