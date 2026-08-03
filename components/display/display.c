@@ -5,6 +5,9 @@
 #include "display_auto.h"
 #include "board_i2c_probe.h"
 #include "esp_log.h"
+#include "driver/gpio.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "display";
 
@@ -69,6 +72,31 @@ esp_err_t display_init(void) {
         } else {
             detected = board_i2c_probe(scl, sda, ac->ssd1306->i2c_addr, 50) ||
                        board_i2c_probe(scl, sda, 0x3D, 50);
+            // Nobody answered. That used to end here with no log at all, and
+            // "display_init failed" alone cannot tell a missing panel from a
+            // panel that lost its VCC — which cost real time on a SuperMini
+            // bring-up. An SSD1306 module carries its own SDA/SCL pull-ups, so
+            // the idle line level settles it: held HIGH against our pull-down
+            // means the module is attached and powered (so suspect the panel or
+            // its address), following our pull-down means no pull-up is on the
+            // bus at all (so suspect its VCC/GND or the signal wires).
+            // Only on the failure path — a successful detect pays nothing.
+            if (!detected) {
+                for (int k = 0; k < 2; k++) {
+                    const int pin = k ? sda : scl;
+                    gpio_config_t io = { .pin_bit_mask = 1ULL << pin,
+                                         .mode = GPIO_MODE_INPUT, .pull_up_en = 0,
+                                         .pull_down_en = 1, .intr_type = GPIO_INTR_DISABLE };
+                    gpio_config(&io);
+                    vTaskDelay(pdMS_TO_TICKS(5));
+                    const int idle = gpio_get_level(pin);
+                    io.pull_down_en = 0; gpio_config(&io);
+                    ESP_LOGW(TAG, "no ssd1306 ack; %s (gpio%d) idles %s — %s",
+                             k ? "sda" : "scl", pin, idle ? "HIGH" : "LOW",
+                             idle ? "module pull-up present, so it is powered"
+                                  : "no pull-up on the bus: module unpowered or unplugged");
+                }
+            }
         }
         if (detected) {
             s_ops = &display_ssd1306_ops;

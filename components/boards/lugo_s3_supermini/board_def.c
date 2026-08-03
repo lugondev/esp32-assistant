@@ -5,40 +5,77 @@
 
 #if CONFIG_IDF_TARGET_ESP32S3
 
-// FOUNDATION / PLACEHOLDER — a compact S3 board (its own pinout, distinct from
-// the devkit). Fill in the real GPIOs when the board exists, then it works like
-// every other board: panel auto-detected, mic/speaker/buttons as declared.
+// ESP32-S3 SuperMini: a compact S3 board (ESP32-S3FH4R2 — 4MB in-package flash,
+// 2MB QUAD PSRAM), carrying the same peripherals as lugo-s3-nx (MAX98357A +
+// INMP441 on dual I2S, SSD1306 OLED) but on its own, much tighter pinout.
 // Selected only via CONFIG_AA_BOARD_LUGO_S3_SUPERMINI (match() returns false),
-// so the devkit stays the S3 autodetect default.
+// so the NX stays the S3 autodetect default. See docs/s3-supermini.md.
+//
+// SuperMini pin notes: only TX/RX + GP1-GP13 are broken out. GPIO0/45/46 (the
+// S3 strapping pins that matter) are NOT on the header, so nothing here can
+// disturb boot mode. GPIO19/20 are the native USB pins the board flashes and
+// consoles over — never route a peripheral to them.
+// GPIO4 IS UNUSABLE ON THIS BOARD — it is shorted to ground. Driving it high
+// from the ESP32's own push-pull output still reads back 0, and an internal
+// pull-up cannot lift it, with nothing connected to the header. Every other
+// broken-out pin (2/3/5/8/9/10/11/13/43) drives both ways cleanly. Whatever
+// lands on GPIO4 reads as a permanent logic 0: as mic SD that was a dead data
+// line, as mic WS the mic never got a word-select and emitted nothing.
+#define PIN_MIC_WS    8    // INMP441 WS   (was 4 — dead pin)
+#define PIN_MIC_SCK   5    // INMP441 SCK  (I2S BCLK)
+#define PIN_MIC_SD    6    // INMP441 SD   (I2S data-in)
+
+#define PIN_SPK_LRC   1    // MAX98357A LRC (I2S WS)
+#define PIN_SPK_BCLK 44    // MAX98357A BCLK — the header pin silkscreened "RX"
+                           // (UART0 RX). Safe because the console runs on the
+                           // native USB-Serial-JTAG, not UART0; the ROM leaves
+                           // this pin an input at boot, then I2S drives it.
+#define PIN_SPK_DIN  12    // MAX98357A DIN (I2S data-out)
+
+#define PIN_DISP_CLK  2    // SSD1306 SCL
+#define PIN_DISP_DAT 13    // SSD1306 SDA
+#define PIN_BTN_WAKE  7    // RTC-capable (GPIO0-21), so deep-sleep wake works
+
+// GPIO4 is deliberately absent from every assignment above. Do not "reclaim" it
+// as a free pin: on the unit this board was brought up on it is shorted to
+// ground, and a pin held at logic 0 fails silently rather than loudly. To
+// re-check on another unit, drive it high and read it back — a healthy pin
+// returns 1, this one returns 0. See docs/s3-supermini.md.
+
+// Two I2S controllers, same split as lugo-s3-nx: mic on I2S_NUM_0, speaker on
+// I2S_NUM_1. No clock fan-out needed (that is the single-I2S C3's problem).
 static const i2s_mic_cfg_t mic_cfg = {
-    .port = 0, .ws = CONFIG_AA_MIC_WS, .sck = CONFIG_AA_MIC_SCK, .sd = CONFIG_AA_MIC_SD,
+    .port = 0, .ws = PIN_MIC_WS, .sck = PIN_MIC_SCK, .sd = PIN_MIC_SD,
+    // This board's INMP441 has L/R tied HIGH, so it drives the right slot —
+    // measured, not assumed: a stereo capture on the data pin read |L|max=0
+    // with |R|max=0x01a78400. The other boards wire L/R to GND and leave this
+    // false. Tie L/R to GND and drop this line if the module is ever rewired.
+    .right_slot = true,
 };
 static const i2s_speaker_cfg_t spk_cfg = {
-    .port = 1, .bclk = CONFIG_AA_SPK_BCLK, .lrc = CONFIG_AA_SPK_LRC, .din = CONFIG_AA_SPK_DIN,
+    .port = 1, .bclk = PIN_SPK_BCLK, .lrc = PIN_SPK_LRC, .din = PIN_SPK_DIN,
 };
-// PLACEHOLDER pins (copied from lugo-s3-nx). Named so board_t.reserved_pins
-// below reuses the same constants — when the real pinout lands, changing these
-// defines updates the cfg structs AND the reserved list together.
-#define PIN_DISP_CLK  42   // ssd1306 SCL / st7789 SCLK
-#define PIN_DISP_DAT  41   // ssd1306 SDA / st7789 MOSI
-#define PIN_DISP_DC    1
-#define PIN_DISP_RST   2
-#define PIN_DISP_BL   17
-#define PIN_BTN_WAKE     47
-#define PIN_BTN_VOL_UP   40
-#define PIN_BTN_VOL_DOWN 39
 
-LUGO_DISPLAY_AUTO(PIN_DISP_CLK, PIN_DISP_DAT, PIN_DISP_DC, PIN_DISP_RST, PIN_DISP_BL);
+// SSD1306 only — written out by hand rather than via LUGO_DISPLAY_AUTO because
+// this board cannot carry the ST7789 alternative: the TFT additionally needs
+// DC/RST (and the SuperMini header has too few pins left to commit two of them
+// to a panel that is not fitted). display_auto_cfg_t takes .st7789 = NULL for
+// exactly this case, so display_init() probes I2C and stops there.
+static const display_ssd1306_cfg_t ssd1306_cfg = {
+    .scl = PIN_DISP_CLK, .sda = PIN_DISP_DAT, .i2c_addr = 0x3C,
+};
+static const display_auto_cfg_t display_cfg = {
+    .ssd1306 = &ssd1306_cfg, .st7789 = NULL,
+};
+
+// Only the wake button is wired; volume is handled over MCP/the web UI.
 static const buttons_gpio_cfg_t buttons_cfg = {
-    .wake = PIN_BTN_WAKE, .vol_up = PIN_BTN_VOL_UP,
-    .vol_down = PIN_BTN_VOL_DOWN, .emotion = -1,
+    .wake = PIN_BTN_WAKE, .vol_up = -1, .vol_down = -1, .emotion = -1,
 };
 
 // Display + buttons (see board_t.reserved_pins). Mic/speaker I2S pins are
 // omitted on purpose — the I2S driver reserves those itself.
-LUGO_RESERVED_PINS(PIN_DISP_CLK, PIN_DISP_DAT, PIN_DISP_DC, PIN_DISP_RST,
-                   PIN_DISP_BL, PIN_BTN_WAKE, PIN_BTN_VOL_UP,
-                   PIN_BTN_VOL_DOWN);
+LUGO_RESERVED_PINS(PIN_DISP_CLK, PIN_DISP_DAT, PIN_BTN_WAKE);
 
 static bool match(void) { return false; }  // opt-in via CONFIG_AA_BOARD_LUGO_S3_SUPERMINI
 

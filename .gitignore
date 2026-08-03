@@ -15,6 +15,12 @@ build/
 # ESP32-C3 build output (separate target dir; see sdkconfig.defaults.esp32c3)
 build-c3/
 sdkconfig.c3
+# ESP32-S3 SuperMini build output (separate dir so the NX build is untouched;
+# sdkconfig.defaults.s3supermini is the tracked source overlay, sdkconfig.s3sm
+# is the generated merge — see docs/s3-supermini.md)
+build-s3sm/
+sdkconfig.s3sm
+sdkconfig.s3sm.old
 sdkconfig
 sdkconfig.old
 managed_components/

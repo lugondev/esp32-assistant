@@ -28,14 +28,14 @@ static esp_err_t mic_init(const void *cfg_v) {
     // INMP441 outputs 24-bit samples left-justified in a 32-bit I2S frame (it
     // always clocks 32 SCK per WS half-period), so the RX channel must run at
     // 32-bit slot width or the mic reads garbage.
-    // MONO/LEFT, not STEREO: the INMP441 drives only the left slot (L/R tied
-    // low), so a STEREO channel spent half its DMA bandwidth and half of
-    // raw[] carrying the empty right slot — 7680 B moved per 60ms frame to
-    // deliver 3840 B of audio. The C3's i2s_fd driver has always read this
-    // same mic as 32-bit MONO, so this is adopting a config already proven on
-    // hardware in this repo, not a new experiment. slot_mask is set explicitly
-    // rather than left to the driver's mono default so the choice of slot is
-    // visible at the call site.
+    // MONO, not STEREO: the INMP441 drives exactly one slot (which one depends
+    // on its L/R pin — see .right_slot below), so a STEREO channel spent half
+    // its DMA bandwidth and half of raw[] carrying the empty other slot —
+    // 7680 B moved per 60ms frame to deliver 3840 B of audio. The C3's i2s_fd
+    // driver has always read this same mic as 32-bit MONO, so this is adopting
+    // a config already proven on hardware in this repo, not a new experiment.
+    // slot_mask is set explicitly rather than left to the driver's mono default
+    // so the choice of slot is visible at the call site.
     i2s_chan_config_t rx_cc = I2S_CHANNEL_DEFAULT_CONFIG((i2s_port_t)c->port, I2S_ROLE_MASTER);
     ESP_ERROR_CHECK(i2s_new_channel(&rx_cc, NULL, &s_rx));
     i2s_std_config_t rx_std = {
@@ -47,10 +47,14 @@ static esp_err_t mic_init(const void *cfg_v) {
             .ws = c->ws, .dout = I2S_GPIO_UNUSED, .din = c->sd,
         },
     };
-    rx_std.slot_cfg.slot_mask = I2S_STD_SLOT_LEFT;   // INMP441 with L/R -> GND
+    // L/R -> GND is the usual wiring and stays the default; a board that ties
+    // L/R high sets .right_slot (see i2s_mic_cfg_t).
+    rx_std.slot_cfg.slot_mask = c->right_slot ? I2S_STD_SLOT_RIGHT : I2S_STD_SLOT_LEFT;
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(s_rx, &rx_std));
     ESP_ERROR_CHECK(i2s_channel_enable(s_rx));
-    ESP_LOGI(TAG, "mic ready");
+    // Name the slot: reading the wrong one is silent (a channel of zeros), not
+    // an error, so it needs to be visible at boot rather than diagnosed later.
+    ESP_LOGI(TAG, "mic ready (%s slot)", c->right_slot ? "right" : "left");
     return ESP_OK;
 }
 

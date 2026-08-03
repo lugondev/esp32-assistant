@@ -1,0 +1,40 @@
+# ESP32-S3 SuperMini overlay (ESP32-S3FH4R2).
+#
+# This file is applied ON TOP OF sdkconfig.defaults + sdkconfig.defaults.esp32s3
+# and only overrides what differs, so the S3 tuning that is genuinely SoC-wide
+# (240MHz, the I/D cache sizing, QIO flash) is inherited rather than copied:
+#
+#   idf.py -B build-s3sm -DSDKCONFIG=sdkconfig.s3sm \
+#          -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.s3supermini" \
+#          build flash monitor
+#
+# IDF expands each entry of that list to "<file>" then "<file>.${IDF_TARGET}",
+# in order, later files winning — so the effective order is
+#   sdkconfig.defaults → sdkconfig.defaults.esp32s3 → this file.
+# Every setting below is a Kconfig *choice*, where the last value loaded wins,
+# which is what lets three lines undo the NX module assumptions.
+
+# ---- Module: ESP32-S3FH4R2, not the N16R8/N8R8 the NX defaults assume ----
+# 4MB in-package flash (NX: 8MB). partitions.csv needs 0x10000 + 0x300000 =
+# 3.2MB, so the existing table still fits with ~800KB spare.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# 2MB QUAD PSRAM (NX: 8MB octal). Getting this wrong is not a soft failure —
+# an octal-mode init against a quad part hangs the bootloader before app_main.
+# Quad tops out at ~half the octal bandwidth, which makes the 64KB/64B-line
+# D-cache inherited from sdkconfig.defaults.esp32s3 matter MORE here, not less:
+# every audio/display buffer read that misses now pays a slower bus.
+CONFIG_SPIRAM_MODE_QUAD=y
+CONFIG_SPIRAM_SPEED_80M=y
+
+# ---- Board ----
+# Force-selected: the SuperMini and the NX both answer the same SSD1306 I2C
+# probe, so autodetect cannot tell them apart — and their pinouts share nothing.
+CONFIG_AA_BOARD_LUGO_S3_SUPERMINI=y
+
+# ---- Console on native USB-Serial-JTAG ----
+# Required, not a preference. The board flashes and monitors over its USB-C
+# port (GPIO19/20), and this wiring puts the MAX98357A BCLK on GPIO44 — the
+# header pin silkscreened "RX", i.e. UART0 RX. Leaving the console on UART0
+# would point it at a pin I2S is driving.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
