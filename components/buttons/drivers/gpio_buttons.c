@@ -1,6 +1,7 @@
 #include "buttons.h"
 #include "buttons_gpio.h"
 #include "board.h"
+#include "button_hold_logic.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -24,6 +25,12 @@ typedef enum {
     BTN_ST_HELD,       // fired; ignore until released (one event per press)
 } btn_state_t;
 
+// Hold-duration tracking, Wake-only (see btn_hold_step in button_hold_logic.h).
+// Indexed in parallel with s_gpios/s_ids; unused (and untouched) for every
+// button other than s_ids[i] == BTN_WAKE.
+static int  s_held_ticks[NBTN];
+static bool s_hold_fired[NBTN];
+
 static void buttons_task(void *arg) {
     (void)arg;
     btn_state_t st[NBTN];
@@ -41,11 +48,22 @@ static void buttons_task(void *arg) {
                     ESP_LOGI(TAG, "press gpio%d", s_gpios[i]);
                     if (s_cb) s_cb(s_ids[i]);
                     st[i] = BTN_ST_HELD;
+                    s_held_ticks[i] = 0;
+                    s_hold_fired[i] = false;
                 } else {
                     st[i] = BTN_ST_RELEASED;             // bounce — ignore
                 }
                 break;
             case BTN_ST_HELD:
+                if (s_ids[i] == BTN_WAKE) {
+                    btn_hold_event_t ev = btn_hold_step(lvl == 1, &s_held_ticks[i], &s_hold_fired[i]);
+                    if (ev == BTN_HOLD_EVENT_RELEASE) {
+                        if (s_cb) s_cb(BTN_WAKE_RELEASE);
+                    } else if (ev == BTN_HOLD_EVENT_HOLD) {
+                        ESP_LOGI(TAG, "wake held to threshold on gpio%d", s_gpios[i]);
+                        if (s_cb) s_cb(BTN_WAKE_HOLD);
+                    }
+                }
                 if (lvl == 1) st[i] = BTN_ST_RELEASED;
                 break;
             }

@@ -11,6 +11,12 @@ typedef enum {
     BTN_VOL_UP,
     BTN_VOL_DOWN,
     BTN_EMOTION,   // tact switch: show a random emotion on the eyes
+    // Wake-only: fired by the button driver's hold-tracking (see
+    // gpio_buttons.c). A press that releases before the 10s hold threshold
+    // fires RELEASE; one that reaches the threshold fires HOLD instead
+    // (and never also fires RELEASE for that same press).
+    BTN_WAKE_RELEASE,
+    BTN_WAKE_HOLD,
 } button_id_t;
 
 typedef struct {
