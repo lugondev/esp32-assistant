@@ -65,3 +65,36 @@ esp_err_t wifi_cfg_save(const wifi_cfg_t *cfg) {
     nvs_close(h);
     return err;
 }
+
+#define FORCE_SETUP_KEY "force_setup"
+
+esp_err_t wifi_cfg_request_setup(void) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+
+    err = nvs_set_u8(h, FORCE_SETUP_KEY, 1);
+    if (err == ESP_OK) err = nvs_commit(h);
+
+    nvs_close(h);
+    return err;
+}
+
+bool wifi_cfg_take_setup_request(void) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return false;  // namespace never created
+    if (err != ESP_OK) return false;
+
+    uint8_t flag = 0;
+    err = nvs_get_u8(h, FORCE_SETUP_KEY, &flag);
+    if (err != ESP_OK || flag == 0) {
+        nvs_close(h);
+        return false;
+    }
+
+    nvs_erase_key(h, FORCE_SETUP_KEY);
+    nvs_commit(h);
+    nvs_close(h);
+    return true;
+}
