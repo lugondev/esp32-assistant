@@ -43,3 +43,8 @@ test/test_battery_logic
 test/test_statusbar
 test/test_pairing_logic
 test/test_i2s_pcm
+test/test_button_hold
+
+# Subagent-driven-development scratch workspace (ledger, briefs, review
+# packages) — git-ignored per-plan working state, not project history.
+.superpowers/
