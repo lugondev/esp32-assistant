@@ -46,8 +46,11 @@ SRC_PAIRING_LOGIC = ../components/pairing/pairing_logic.c ../components/lugo_pro
 I2S_PCM_CFLAGS = -std=c11 -Wall -Wextra -g -O0 -I../components/audio/include
 SRC_I2S_PCM = ../components/audio/i2s_pcm.c
 
+BUTTON_HOLD_CFLAGS = -std=c11 -Wall -Wextra -g -O0 -I../components/buttons/include
+SRC_BUTTON_HOLD = ../components/buttons/button_hold_logic.c
+
 .PHONY: test
-test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_protocol test_mcp_server test_board_select test_board_facades test_gfx test_robot_eyes test_statusbar test_battery_logic test_pairing_logic test_i2s_pcm
+test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_protocol test_mcp_server test_board_select test_board_facades test_gfx test_robot_eyes test_statusbar test_battery_logic test_pairing_logic test_i2s_pcm test_button_hold
 	./test_provisioning_ssid
 	./test_provisioning_form
 	./test_display_font
@@ -61,6 +64,7 @@ test: test_provisioning_ssid test_provisioning_form test_display_font test_lugo_
 	./test_battery_logic
 	./test_pairing_logic
 	./test_i2s_pcm
+	./test_button_hold
 	@echo '--- mcp frame size ---'
 	python3 ../tools/check_mcp_frame_size.py
 
@@ -103,6 +107,9 @@ test_pairing_logic: test_pairing_logic.c $(SRC_PAIRING_LOGIC)
 test_i2s_pcm: test_i2s_pcm.c $(SRC_I2S_PCM)
 	$(CC) $(I2S_PCM_CFLAGS) -o $@ $^
 
+test_button_hold: test_button_hold.c $(SRC_BUTTON_HOLD)
+	$(CC) $(BUTTON_HOLD_CFLAGS) -o $@ $^
+
 clean:
 	rm -rf test_provisioning_ssid test_provisioning_ssid.dSYM \
 	       test_provisioning_form test_provisioning_form.dSYM \
@@ -116,4 +123,5 @@ clean:
 	       test_statusbar test_statusbar.dSYM \
 	       test_battery_logic test_battery_logic.dSYM \
 	       test_pairing_logic test_pairing_logic.dSYM \
-	       test_i2s_pcm test_i2s_pcm.dSYM
+	       test_i2s_pcm test_i2s_pcm.dSYM \
+	       test_button_hold test_button_hold.dSYM
