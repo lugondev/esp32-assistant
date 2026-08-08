@@ -61,17 +61,20 @@ is treated as `false`, not an error — matches `wifi_cfg_load()`'s existing
 
 ```c
 typedef enum {
-    BTN_WAKE,          // wake / conversation toggle (press-down edge)
-    BTN_WAKE_RELEASE,  // NEW: Wake released before the 10s hold threshold
-    BTN_WAKE_HOLD,     // NEW: Wake has been held continuously for 10s
+    BTN_WAKE,      // wake / conversation toggle (press-down edge)
     BTN_VOL_UP,
     BTN_VOL_DOWN,
-    BTN_EMOTION,
+    BTN_EMOTION,   // tact switch: show a random emotion on the eyes
+    BTN_WAKE_RELEASE,  // NEW: Wake released before the 10s hold threshold
+    BTN_WAKE_HOLD,     // NEW: Wake has been held continuously for 10s
 } button_id_t;
 ```
 
-Only Wake gets hold/release tracking. Vol+/-/Emotion keep their current
-single "fires once on press" behavior unchanged.
+`board_types.h` already comments that the first three values must stay
+0/1/2 and new buttons are only ever appended — `BTN_WAKE_RELEASE` and
+`BTN_WAKE_HOLD` go after `BTN_EMOTION`, not next to `BTN_WAKE`. Only Wake
+gets hold/release tracking. Vol+/-/Emotion keep their current single "fires
+once on press" behavior unchanged.
 
 ### 3. Hold/release timing — `components/buttons/drivers/gpio_buttons.c`
 
