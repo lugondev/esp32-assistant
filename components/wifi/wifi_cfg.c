@@ -1,8 +1,11 @@
 #include "wifi_cfg.h"
+#include "esp_log.h"
 #include "nvs.h"
 #include <string.h>
 
 #define NVS_NS "aa_cfg"
+
+static const char *TAG = "wifi_cfg";
 
 static esp_err_t load_str(nvs_handle_t h, const char *key, char *out,
                            size_t outlen, const char *fallback) {
@@ -82,19 +85,39 @@ esp_err_t wifi_cfg_request_setup(void) {
 
 bool wifi_cfg_take_setup_request(void) {
     nvs_handle_t h;
-    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
-    if (err == ESP_ERR_NVS_NOT_FOUND) return false;  // namespace never created
+    // Open read-only first: with NVS_READWRITE a missing namespace is silently
+    // created as a side effect, which we don't want for this lightweight check.
+    // NVS_READONLY genuinely returns ESP_ERR_NVS_NOT_FOUND when the namespace
+    // doesn't exist yet, so this stays a true no-op on a fresh device.
+    esp_err_t err = nvs_open(NVS_NS, NVS_READONLY, &h);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return false;
     if (err != ESP_OK) return false;
 
     uint8_t flag = 0;
     err = nvs_get_u8(h, FORCE_SETUP_KEY, &flag);
+    nvs_close(h);
     if (err != ESP_OK || flag == 0) {
-        nvs_close(h);
         return false;
     }
 
-    nvs_erase_key(h, FORCE_SETUP_KEY);
-    nvs_commit(h);
+    // The flag was set: re-open read-write to clear it. Only mutate NVS now
+    // that there's actually something to clear.
+    err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "failed to reopen \"%s\" read-write to clear setup flag: %s",
+                 NVS_NS, esp_err_to_name(err));
+        return true;
+    }
+
+    err = nvs_erase_key(h, FORCE_SETUP_KEY);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "failed to erase %s: %s", FORCE_SETUP_KEY, esp_err_to_name(err));
+    }
+    err = nvs_commit(h);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "failed to commit clearing of %s: %s", FORCE_SETUP_KEY,
+                 esp_err_to_name(err));
+    }
     nvs_close(h);
     return true;
 }
