@@ -104,6 +104,12 @@ static volatile bool s_voice_busy = false;
 // callback, read by mic_task.
 static volatile bool s_active = false;
 
+// Set by BTN_WAKE's press-down case when it already acted (barge-in), so
+// the paired BTN_WAKE_RELEASE knows not to also fire the idle/active
+// toggle for the same press. Only ever touched from the button task, so
+// no volatile/atomic needed (unlike s_active, which mic_task also reads).
+static bool s_wake_press_handled;
+
 // "Tear the playback path down and start clean" request, serviced by spk_task
 // — the owner of the I2S TX channel and the opus decoder — which flushes the
 // jitter buffer, drops the committed DMA, and resets the decoder. One-shot flag.
@@ -823,11 +829,33 @@ static void on_button(button_id_t id) {
             s_last_activity_s = now_s();
             ws_client_send_abort("user");
             send_listening_status();
+            s_wake_press_handled = true;
             break;
         }
-        // Not speaking: toggle idle/listening. Waking re-enables the link (it may
-        // be asleep after an idle goodbye); going idle puts it back to sleep.
-        if (s_active) go_idle(); else go_active();
+        // Not speaking: don't toggle idle/active on press-down anymore — a
+        // hold that turns into a 10s setup-portal request (BTN_WAKE_HOLD)
+        // must never flip app state first. A normal tap releases in well
+        // under 10s, so deferring the toggle to BTN_WAKE_RELEASE is
+        // imperceptible for the common case.
+        s_wake_press_handled = false;
+        break;
+    }
+    case BTN_WAKE_RELEASE: {
+        // No-op if this press already acted on press-down (barge-in above).
+        // Waking re-enables the link (it may be asleep after an idle
+        // goodbye); going idle puts it back to sleep.
+        if (!s_wake_press_handled) {
+            if (s_active) go_idle(); else go_active();
+        }
+        break;
+    }
+    case BTN_WAKE_HOLD: {
+        ESP_LOGI(TAG, "wake held 10s -- entering setup mode");
+        status_push(false, ROBOT_EMOTION_NEUTRAL, "Setup mode", "Restarting...");
+        esp_err_t err = wifi_cfg_request_setup();
+        if (err != ESP_OK) ESP_LOGW(TAG, "wifi_cfg_request_setup failed: %s", esp_err_to_name(err));
+        vTaskDelay(pdMS_TO_TICKS(1200));  // let the HUD message render before reboot
+        esp_restart();
         break;
     }
     case BTN_VOL_UP:
@@ -1267,6 +1295,14 @@ void app_main(void) {
     // wifi_sta_start runs even with an empty SSID: provisioning_start needs a
     // started, STA-mode radio to scan for networks before it flips to AP mode.
     ESP_ERROR_CHECK(wifi_sta_start(s_cfg.ssid, s_cfg.password));
+    if (wifi_cfg_take_setup_request()) {
+        // Wake was held 10s (see on_button's BTN_WAKE_HOLD case). Skip
+        // straight to the portal — don't wait on a connection the user is
+        // likely here specifically to change.
+        ESP_LOGI(TAG, "setup requested via wake-hold, starting setup portal");
+        display_show("Setup mode", "Starting setup AP...");
+        provisioning_start(&s_cfg);  // does not return
+    }
     if (s_cfg.ssid[0] == '\0') {
         // Nothing configured yet (fresh device, or NVS cleared). Skip straight
         // to the portal instead of spending 15s waiting on a connect attempt
