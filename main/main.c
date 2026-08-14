@@ -12,6 +12,7 @@
 #include "nvs_flash.h"
 #include "ws_client.h"
 #include "audio.h"
+#include "audio_selftest.h"
 #include "opus_codec.h"
 #include "mcp_tools.h"
 #include "pairing.h"
@@ -1280,6 +1281,14 @@ void app_main(void) {
                                      // ready before the first status announcement,
                                      // and audio_init() has no WiFi dependency.
     ESP_ERROR_CHECK(battery_init());  // no-op if this board has no battery hardware
+
+#if CONFIG_AA_AUDIO_LOOPBACK
+    // Audio bring-up: hand the device over to the mic->speaker loopback test
+    // and never come back. Placed here, before NVS/WiFi/the gateway and before
+    // any audio task is created, so the only things running are the mic, the
+    // speaker and one button — nothing else can be blamed for silence.
+    audio_selftest_run();   // never returns
+#endif
 
     esp_err_t nvs_err = nvs_flash_init();
     if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {

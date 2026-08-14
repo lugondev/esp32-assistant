@@ -48,3 +48,4 @@ test/test_button_hold
 # Subagent-driven-development scratch workspace (ledger, briefs, review
 # packages) — git-ignored per-plan working state, not project history.
 .superpowers/
+test/test_loopback_logic

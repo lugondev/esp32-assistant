@@ -60,6 +60,37 @@ config AA_MIC_METER
         visible without the serial console. Takes precedence over AA_AUTO_WAKE.
         Leave off for normal builds.
 
+config AA_AUDIO_LOOPBACK
+    bool "Mic->speaker loopback self-test (audio bring-up)"
+    default n
+    help
+        Dev/bring-up: replaces the whole app with a mic/speaker loopback test.
+        Press BOOT to start recording, press BOOT again to stop and hear the
+        take played back; it also stops on its own at the buffer cap (10s in
+        PSRAM, less on a board without it).
+
+        app_main runs board/display/audio init and then never returns from the
+        test, so WiFi, the gateway WebSocket, opus and every audio task are out
+        of the picture -- a silent mic or a dead amp cannot be blamed on the
+        network or on CPU contention. Each recorded frame logs its peak
+        amplitude, so a mic that captures nothing (peak stays 0) is
+        distinguishable from a speaker that plays nothing at a glance.
+
+        Takes precedence over AA_MIC_METER and AA_AUTO_WAKE. Leave off for
+        normal builds.
+
+config AA_AUDIO_LOOPBACK_BTN_GPIO
+    int "GPIO of the BOOT button used by the loopback self-test"
+    depends on AA_AUDIO_LOOPBACK
+    default 9 if IDF_TARGET_ESP32C3
+    default 0
+    help
+        The module's onboard BOOT button, NOT the board's wired Wake button --
+        the test deliberately bypasses the buttons component so it still works
+        when the wired button's pin is itself under suspicion. GPIO0 on the S3
+        SuperMini, GPIO9 on the C3 SuperMini. Change only if your module wires
+        BOOT elsewhere.
+
 config AA_SKIP_DISPLAY_INIT
     bool "Skip display panel hardware init (bring-up isolation)"
     default n
