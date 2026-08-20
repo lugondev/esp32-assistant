@@ -21,6 +21,12 @@ sdkconfig.c3
 build-s3sm/
 sdkconfig.s3sm
 sdkconfig.s3sm.old
+# XH-S3E-AL build output (same arrangement: sdkconfig.defaults.s3xhs3e is the
+# tracked source overlay, sdkconfig.xhs3e is the generated merge —
+# see docs/xh-s3e-al.md)
+build-xhs3e/
+sdkconfig.xhs3e
+sdkconfig.xhs3e.old
 sdkconfig
 sdkconfig.old
 managed_components/

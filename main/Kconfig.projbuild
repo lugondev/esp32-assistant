@@ -130,6 +130,16 @@ config AA_BOARD_LUGO_S3_WROOM
     bool "Lugo S3 WROOM (auto display, camera-capable) [placeholder pins]"
     depends on IDF_TARGET_ESP32S3
 
+config AA_BOARD_LUGO_S3_XHS3E
+    bool "Lugo S3 XH-S3E-AL — ESP32-S3-WROOM-1 N16R8, onboard mic + amp (SSD1306 I2C and a bare speaker plug in)"
+    depends on IDF_TARGET_ESP32S3
+    help
+        XH-S3E-AL V1.0. The mic and class-D amp are fitted on the board and
+        their I2S lines never reach a header; the header carries only UART,
+        power, an I2C pair for the OLED and the amp's speaker pads. Needs
+        sdkconfig.defaults.s3xhs3e for the 16MB module — see
+        docs/xh-s3e-al.md.
+
 config AA_BOARD_LUGO_C3_DEVKIT
     bool "Lugo C3 DevKitM-1 (SSD1306 0.96in I2C + MAX98357A/INMP441 full-duplex I2S)"
     depends on IDF_TARGET_ESP32C3
@@ -160,6 +170,7 @@ config AA_BOARD_NAME
     default "lugo-s3-nx" if AA_BOARD_LUGO_S3_NX
     default "lugo-s3-supermini" if AA_BOARD_LUGO_S3_SUPERMINI
     default "lugo-s3-wroom" if AA_BOARD_LUGO_S3_WROOM
+    default "lugo-s3-xhs3e" if AA_BOARD_LUGO_S3_XHS3E
     default "lugo-c3-devkit" if AA_BOARD_LUGO_C3_DEVKIT
     default "lugo-c3-supermini" if AA_BOARD_LUGO_C3_SUPERMINI
     default "lugo-custom" if AA_BOARD_CUSTOM

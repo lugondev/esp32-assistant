@@ -39,6 +39,7 @@ its own mic/speaker/display/button pins, so you pick a board instead of hand-edi
 | `lugo-s3-supermini` | `AA_BOARD_LUGO_S3_SUPERMINI` | ESP32-S3FH4R2 SuperMini, 4MB flash + 2MB **quad** PSRAM, dual-I2S audio — see [docs/s3-supermini.md](docs/s3-supermini.md) |
 | `lugo-c3-supermini` | `AA_BOARD_LUGO_C3_SUPERMINI` | ESP32-C3 SuperMini, single-I2S simplex audio — foundation board |
 | `lugo-s3-wroom` | `AA_BOARD_LUGO_S3_WROOM` | ESP32-S3-WROOM, camera-capable — foundation board, placeholder pins |
+| `lugo-s3-xhs3e` | `AA_BOARD_LUGO_S3_XHS3E` | XH-S3E-AL V1.0, ESP32-S3-WROOM-1 N16R8 with **onboard mic + amp** — only the SSD1306 and a bare speaker plug in — see [docs/xh-s3e-al.md](docs/xh-s3e-al.md) |
 | `lugo-custom` | `AA_BOARD_CUSTOM` | no `board_def.c` of its own: every pin comes from `CONFIG_AA_CUSTOM_*` in menuconfig, for bringing up new hardware — see [docs/custom-board.md](docs/custom-board.md) |
 
 Pins live in each board's `board_def.c`. Current defaults:
@@ -62,6 +63,16 @@ MAX98357A BCLK→GPIO44 (the `RX` header pin), LRC→GPIO1, DIN→GPIO12; SSD130
 wake button→GPIO7. **GPIO4 is unusable** (shorted to ground on the bring-up unit). SSD1306 only
 (no ST7789 option). Needs its own sdkconfig overlay for the 4MB/quad-PSRAM module —
 see [docs/s3-supermini.md](docs/s3-supermini.md).
+
+**ESP32-S3 XH-S3E-AL (`lugo-s3-xhs3e`)** — nothing to wire on the audio side: the mic and the
+class-D amp are fitted on the board. You plug in an SSD1306 (SDA→GPIO41, SCL→GPIO42 — the only
+two GPIOs the header exposes) and a bare speaker on the amp's pad pair. Wake is the BOOT button
+(GPIO0); there are no volume buttons, so volume is MCP/web-UI only. The onboard audio pins
+(mic WS/SCK/SD→GPIO4/5/6 in the **left** slot, amp DIN/BCLK/LRC→GPIO7/15/16) match the vendor's
+own xiaozhi-esp32 config, `bread-compact-wifi-lcd`, and are confirmed by the loopback self-test.
+That config's **SPI** display pins are not exposed on this header, though, so the SSD1306 wiring
+follows the silkscreen instead — `ssd1306 i2c 128x64` on scl=42/sda=41. Needs its own sdkconfig
+overlay for the 16MB module — see [docs/xh-s3e-al.md](docs/xh-s3e-al.md).
 
 ---
 

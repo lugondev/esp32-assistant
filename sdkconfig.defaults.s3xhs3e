@@ -1,0 +1,42 @@
+# XH-S3E-AL V1.0 overlay (ESP32-S3-WROOM-1 N16R8 module).
+#
+# Applied ON TOP OF sdkconfig.defaults + sdkconfig.defaults.esp32s3, overriding
+# only what differs, so the SoC-wide S3 tuning (240MHz, I/D cache sizing, QIO
+# flash) is inherited rather than copied:
+#
+#   idf.py -B build-xhs3e -DSDKCONFIG=sdkconfig.xhs3e \
+#          -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.s3xhs3e" \
+#          build flash monitor
+#
+# IDF expands each entry of that list to "<file>" then "<file>.${IDF_TARGET}",
+# in order, later files winning — so the effective order is
+#   sdkconfig.defaults -> sdkconfig.defaults.esp32s3 -> this file.
+
+# ---- Module: XH-S3E carries an ESP32-S3-WROOM-1 N16R8 ----
+# 16MB flash, not the 8MB the NX defaults assume. partitions.csv needs
+# 0x10000 + 0x300000 = 3.2MB, so there is a lot of room spare either way; this
+# is here so the extra 8MB is not simply invisible to the partition table.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# PSRAM is deliberately NOT overridden. The R8 in N16R8 means 8MB OCTAL, which
+# is exactly what sdkconfig.defaults.esp32s3 already sets, so inheriting is
+# correct AND keeps the octal cache tuning in that file honest.
+#
+# CONFIRMED on hardware — the boot log reports
+#   esp_psram: Adding pool of 8192K of PSRAM memory to heap allocator
+# so the module really is R8/octal and inheriting the S3 default is right.
+# (Had it been an R2/quad part, an octal init would have HUNG THE BOOTLOADER
+# before app_main — no log, no crash dump, just a dead port. Worth knowing if a
+# later unit ships with a different module: the fix is CONFIG_SPIRAM_MODE_QUAD=y
+# here, not a conclusion that the board is bricked.)
+
+# ---- Board ----
+CONFIG_AA_BOARD_LUGO_S3_XHS3E=y
+
+# ---- Console on native USB-Serial-JTAG ----
+# The board flashes and monitors over its USB-C port, which goes straight to the
+# S3's native USB pins (GPIO19/20) — there is no USB-UART bridge chip on it.
+# UART0 (the TXD/RXD header pins) is left free for whatever the user wants.
+#
+# CONFIRMED on hardware — the board enumerates as /dev/cu.usbmodem*, i.e. the
+# native USB peripheral, so there is no bridge chip to console over.
