@@ -807,10 +807,57 @@ static void volume_revert_cb(void *arg) {
     }
 }
 
+// False until app_main has finished wiring everything up. The button task now
+// starts BEFORE the setup portal (so the portal is escapable) and therefore
+// before s_status_q, the timers, audio and ws_client exist — every handler that
+// touches those is gated on this. It never goes back to false: the portal paths
+// simply never set it, because they never return.
+static bool s_app_ready;
+
+// esp_timer that disarms the erase prompt if the user walks away from it.
+static esp_timer_handle_t s_erase_confirm_timer;
+
+// Panel access for the hold ladder. Before s_app_ready there is no status_task
+// to own the display, so the ladder writes it directly; afterwards it must go
+// through the queue like every other status message.
+static void hold_ui(const char *l1, const char *l2) {
+    if (s_app_ready) status_push(false, ROBOT_EMOTION_NEUTRAL, l1, l2);
+    else display_show(l1, l2);
+}
+
+// Puts back whatever the prompt covered up: the live status line once the app
+// is running, otherwise the setup portal's address screen (a no-op when the
+// portal isn't up, i.e. during the brief pre-portal window at boot).
+static void hold_ui_restore(void) {
+    if (s_app_ready) volume_revert_cb(NULL);   // re-derives the line from state
+    else provisioning_redraw_status();
+}
+
+static void erase_confirm_timeout_cb(void *arg) {
+    (void)arg;
+    ESP_LOGI(TAG, "erase confirmation timed out -- cancelled");
+    buttons_set_confirm_mode(false);
+    hold_ui_restore();
+}
+
 // Runs in the button task context — only flips flags, adjusts the volume int,
 // queues display messages, and sends a WS control frame (network, not
 // hardware). It must never call display/audio hardware directly.
 static void on_button(button_id_t id) {
+    // Before the app is up (early boot, and the whole time the setup portal is
+    // running) the only thing that works is the Wake hold ladder — it is the
+    // user's way back out of a portal they cannot otherwise leave. Everything
+    // else would touch a queue/timer/codec that does not exist yet.
+    if (!s_app_ready) {
+        switch (id) {
+        case BTN_WAKE_WARN_SETUP: case BTN_WAKE_WARN_ERASE:
+        case BTN_WAKE_HOLD:       case BTN_WAKE_ERASE_ARM:
+        case BTN_WAKE_ERASE_CONFIRM: case BTN_WAKE_CONFIRM_ABORT:
+            break;              // fall through to the handlers below
+        default:
+            return;
+        }
+    }
     switch (id) {
     case BTN_WAKE: {
         if (s_state == APP_SPEAKING) {
@@ -850,13 +897,57 @@ static void on_button(button_id_t id) {
         }
         break;
     }
-    case BTN_WAKE_HOLD: {
-        ESP_LOGI(TAG, "wake held 10s -- entering setup mode");
-        status_push(false, ROBOT_EMOTION_NEUTRAL, "Setup mode", "Restarting...");
+    // --- Wake hold ladder (button_hold_logic.h) ---
+    // The two WARN cases are the whole reason the 10s action moved to release:
+    // they give the user a chance to see what is about to happen and keep
+    // holding for the bigger hammer, or let go for the smaller one.
+    case BTN_WAKE_WARN_SETUP: {
+        ESP_LOGI(TAG, "wake held 10s -- release for setup, keep holding to erase");
+        hold_ui("Release: Setup", "Hold 5s: ERASE");
+        break;
+    }
+    case BTN_WAKE_WARN_ERASE: {
+        ESP_LOGI(TAG, "wake held 15s -- release to erase all data");
+        hold_ui("Release to ERASE", "all data");
+        break;
+    }
+    case BTN_WAKE_HOLD: {   // released between 10s and 15s
+        ESP_LOGI(TAG, "wake released in setup window -- entering setup mode");
+        hold_ui("Setup mode", "Restarting...");
         esp_err_t err = wifi_cfg_request_setup();
         if (err != ESP_OK) ESP_LOGW(TAG, "wifi_cfg_request_setup failed: %s", esp_err_to_name(err));
         vTaskDelay(pdMS_TO_TICKS(1200));  // let the HUD message render before reboot
         esp_restart();
+        break;
+    }
+    case BTN_WAKE_ERASE_ARM: {   // released at 15s or beyond
+        ESP_LOGW(TAG, "erase armed -- hold 3s to confirm");
+        hold_ui("Erase all data?", "Hold 3s to confirm");
+        buttons_set_confirm_mode(true);
+        esp_timer_stop(s_erase_confirm_timer);  // no-op if not running
+        esp_timer_start_once(s_erase_confirm_timer, 10 * 1000 * 1000);
+        break;
+    }
+    case BTN_WAKE_ERASE_CONFIRM: {
+        ESP_LOGW(TAG, "erase confirmed -- wiping NVS and restarting");
+        buttons_set_confirm_mode(false);
+        esp_timer_stop(s_erase_confirm_timer);
+        hold_ui("Erasing...", "Restarting");
+        vTaskDelay(pdMS_TO_TICKS(1200));
+        // Wipes WiFi credentials, server host/port and the paired device token
+        // alike — the point is a device that comes back up as if unboxed, which
+        // (with no build-time SSID) means booting straight into the portal.
+        // nvs_flash_erase() deinitialises the partition itself if it is open.
+        esp_err_t err = nvs_flash_erase();
+        if (err != ESP_OK) ESP_LOGE(TAG, "nvs_flash_erase failed: %s", esp_err_to_name(err));
+        esp_restart();
+        break;
+    }
+    case BTN_WAKE_CONFIRM_ABORT: {
+        ESP_LOGI(TAG, "erase cancelled");
+        buttons_set_confirm_mode(false);
+        esp_timer_stop(s_erase_confirm_timer);
+        hold_ui_restore();
         break;
     }
     case BTN_VOL_UP:
@@ -1290,6 +1381,18 @@ void app_main(void) {
     audio_selftest_run();   // never returns
 #endif
 
+    // Buttons come up here, BEFORE the three provisioning_start() branches
+    // below — each of those blocks forever, so a button task started after them
+    // would never exist in portal mode and the 10s/15s Wake ladder would be
+    // unreachable exactly when it is most needed (wrong gateway saved, wrong
+    // WiFi saved, portal unusable). on_button gates itself on s_app_ready until
+    // the rest of app_main has run.
+    const esp_timer_create_args_t erase_timer_args = {
+        .callback = &erase_confirm_timeout_cb, .name = "erase_confirm",
+    };
+    ESP_ERROR_CHECK(esp_timer_create(&erase_timer_args, &s_erase_confirm_timer));
+    buttons_start(on_button);
+
     esp_err_t nvs_err = nvs_flash_init();
     if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -1371,7 +1474,6 @@ void app_main(void) {
     mcp_tools_set_show_text_hook(show_mcp_text);
     // No hook for self.session.new: its frame is deliberately sent from the
     // LUGO_EV_MCP handler after the tool result, not from the tool itself.
-    buttons_start(on_button);  // Wake toggles s_active; Vol +/- adjust volume
     // 3072 -> 6144: this task now also runs do_repair()'s blocking call chain
     // (aa_run_pairing's esp_http_client GET/POST + JSON parsing, possibly over
     // TLS when CONFIG_AA_SERVER_SECURE), not just the trivial idle-timeout
@@ -1432,6 +1534,11 @@ void app_main(void) {
     if (xTaskCreatePinnedToCore(mic_task, "mic", MIC_TASK_STACK, NULL, MIC_TASK_PRIO, NULL, APP_CPU_AUDIO) != pdPASS)
         ESP_LOGE(TAG, "mic task create failed (out of internal RAM for a %d B stack)", MIC_TASK_STACK);
     xTaskCreatePinnedToCore(uplink_task, "uplink", 4096, NULL, MIC_TASK_PRIO, NULL, APP_CPU_AUDIO);
+
+    // Everything the button handlers touch (s_status_q, the timers, audio,
+    // ws_client) now exists, so the full button set can be honoured. Until this
+    // point on_button only serviced the Wake hold ladder.
+    s_app_ready = true;
 
     // Connect-on-wake: the WS stays closed (asleep) until the user presses Wake.
     // No gateway connection is held while idle. Routed through s_status_q (not

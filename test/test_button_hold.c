@@ -1,63 +1,134 @@
 #include "button_hold_logic.h"
 #include <stdio.h>
+#include <string.h>
 
 static int failures = 0;
 #define CHECK(cond) do { if (!(cond)) { \
   printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); failures++; } } while (0)
 
-// Simulates `n_ticks` ticks of continuous hold (released=false), returning
-// the last non-NONE event seen (or NONE if none fired).
-static btn_hold_event_t hold_for(int n_ticks, int *held_ticks, bool *hold_fired) {
+// Simulates `n_ticks` ticks of continuous hold, returning the last non-NONE
+// event seen (or NONE if none fired).
+static btn_hold_event_t hold_for(int n_ticks, bool confirm_mode, btn_hold_state_t *st) {
     btn_hold_event_t last = BTN_HOLD_EVENT_NONE;
     for (int i = 0; i < n_ticks; i++) {
-        btn_hold_event_t ev = btn_hold_step(false, held_ticks, hold_fired);
+        btn_hold_event_t ev = btn_hold_step(false, confirm_mode, st);
         if (ev != BTN_HOLD_EVENT_NONE) last = ev;
     }
     return last;
 }
 
-static void test_short_tap_releases_before_threshold(void) {
-    int ticks = 0; bool fired = false;
-    btn_hold_event_t during = hold_for(5, &ticks, &fired);  // 100ms held
-    CHECK(during == BTN_HOLD_EVENT_NONE);
-    CHECK(fired == false);
-    btn_hold_event_t on_release = btn_hold_step(/*released=*/true, &ticks, &fired);
-    CHECK(on_release == BTN_HOLD_EVENT_RELEASE);
+// ---- normal mode: the 10s / 15s ladder ----
+
+static void test_short_tap_reports_release(void) {
+    btn_hold_state_t st = {0};
+    CHECK(hold_for(5, false, &st) == BTN_HOLD_EVENT_NONE);   // 100ms
+    CHECK(btn_hold_step(true, false, &st) == BTN_HOLD_EVENT_RELEASE);
 }
 
-static void test_hold_fires_exactly_at_threshold(void) {
-    int ticks = 0; bool fired = false;
-    // One tick short of the threshold: nothing yet.
-    btn_hold_event_t during = hold_for(BTN_HOLD_THRESHOLD_TICKS - 1, &ticks, &fired);
-    CHECK(during == BTN_HOLD_EVENT_NONE);
-    CHECK(fired == false);
-    // The threshold-crossing tick: fires HOLD exactly once.
-    btn_hold_event_t at_threshold = btn_hold_step(false, &ticks, &fired);
-    CHECK(at_threshold == BTN_HOLD_EVENT_HOLD);
-    CHECK(fired == true);
+static void test_setup_warning_fires_exactly_at_10s(void) {
+    btn_hold_state_t st = {0};
+    CHECK(hold_for(BTN_HOLD_SETUP_TICKS - 1, false, &st) == BTN_HOLD_EVENT_NONE);
+    CHECK(btn_hold_step(false, false, &st) == BTN_HOLD_EVENT_WARN_SETUP);
 }
 
-static void test_hold_past_threshold_does_not_refire(void) {
-    int ticks = 0; bool fired = false;
-    hold_for(BTN_HOLD_THRESHOLD_TICKS, &ticks, &fired);  // crosses threshold once
-    CHECK(fired == true);
-    // Keep holding well past the threshold: no repeat HOLD events.
-    btn_hold_event_t still_held = hold_for(100, &ticks, &fired);
-    CHECK(still_held == BTN_HOLD_EVENT_NONE);
+static void test_setup_warning_does_not_refire(void) {
+    btn_hold_state_t st = {0};
+    hold_for(BTN_HOLD_SETUP_TICKS, false, &st);
+    // Everything between the two thresholds is quiet.
+    CHECK(hold_for(BTN_HOLD_ERASE_TICKS - BTN_HOLD_SETUP_TICKS - 1, false, &st)
+          == BTN_HOLD_EVENT_NONE);
 }
 
-static void test_release_after_hold_fired_reports_nothing(void) {
-    int ticks = 0; bool fired = false;
-    hold_for(BTN_HOLD_THRESHOLD_TICKS, &ticks, &fired);  // HOLD already fired
-    btn_hold_event_t on_release = btn_hold_step(/*released=*/true, &ticks, &fired);
-    CHECK(on_release == BTN_HOLD_EVENT_NONE);
+static void test_erase_warning_fires_exactly_at_15s(void) {
+    btn_hold_state_t st = {0};
+    hold_for(BTN_HOLD_ERASE_TICKS - 1, false, &st);
+    CHECK(btn_hold_step(false, false, &st) == BTN_HOLD_EVENT_WARN_ERASE);
+}
+
+static void test_holding_past_15s_is_quiet(void) {
+    btn_hold_state_t st = {0};
+    hold_for(BTN_HOLD_ERASE_TICKS, false, &st);
+    CHECK(hold_for(500, false, &st) == BTN_HOLD_EVENT_NONE);  // +10s
+}
+
+static void test_release_between_10s_and_15s_requests_setup(void) {
+    btn_hold_state_t st = {0};
+    hold_for(BTN_HOLD_SETUP_TICKS, false, &st);
+    CHECK(btn_hold_step(true, false, &st) == BTN_HOLD_EVENT_SETUP);
+
+    // ...and one tick short of 15s still means setup, not erase.
+    btn_hold_state_t st2 = {0};
+    hold_for(BTN_HOLD_ERASE_TICKS - 1, false, &st2);
+    CHECK(btn_hold_step(true, false, &st2) == BTN_HOLD_EVENT_SETUP);
+}
+
+static void test_release_at_or_after_15s_arms_erase(void) {
+    btn_hold_state_t st = {0};
+    hold_for(BTN_HOLD_ERASE_TICKS, false, &st);
+    CHECK(btn_hold_step(true, false, &st) == BTN_HOLD_EVENT_ERASE_ARM);
+}
+
+static void test_release_resets_state_for_the_next_press(void) {
+    btn_hold_state_t st = {0};
+    hold_for(BTN_HOLD_ERASE_TICKS, false, &st);
+    btn_hold_step(true, false, &st);              // ERASE_ARM, state resets
+    CHECK(st.ticks == 0);
+    CHECK(st.warned_setup == false);
+    CHECK(st.warned_erase == false);
+    // A short tap right after must read as a plain tap, not a leftover hold.
+    CHECK(hold_for(5, false, &st) == BTN_HOLD_EVENT_NONE);
+    CHECK(btn_hold_step(true, false, &st) == BTN_HOLD_EVENT_RELEASE);
+}
+
+// ---- confirm mode: a single 3s threshold ----
+
+static void test_confirm_hold_fires_exactly_at_3s(void) {
+    btn_hold_state_t st = {0};
+    CHECK(hold_for(BTN_HOLD_CONFIRM_TICKS - 1, true, &st) == BTN_HOLD_EVENT_NONE);
+    CHECK(btn_hold_step(false, true, &st) == BTN_HOLD_EVENT_ERASE_CONFIRMED);
+}
+
+static void test_confirm_short_press_aborts(void) {
+    btn_hold_state_t st = {0};
+    hold_for(BTN_HOLD_CONFIRM_TICKS - 1, true, &st);
+    CHECK(btn_hold_step(true, true, &st) == BTN_HOLD_EVENT_CONFIRM_ABORT);
+}
+
+static void test_confirm_release_after_confirming_is_quiet(void) {
+    btn_hold_state_t st = {0};
+    hold_for(BTN_HOLD_CONFIRM_TICKS, true, &st);   // ERASE_CONFIRMED fired
+    CHECK(btn_hold_step(true, true, &st) == BTN_HOLD_EVENT_NONE);
+}
+
+static void test_confirm_hold_never_warns(void) {
+    btn_hold_state_t st = {0};
+    // Well past both normal thresholds, but in confirm mode: the only event is
+    // the 3s confirmation, never WARN_SETUP/WARN_ERASE.
+    btn_hold_event_t last = hold_for(BTN_HOLD_ERASE_TICKS + 100, true, &st);
+    CHECK(last == BTN_HOLD_EVENT_ERASE_CONFIRMED);
+}
+
+static void test_confirm_threshold_is_shorter_than_setup(void) {
+    // Guards the ladder's ordering: a confirm must be reachable long before
+    // the setup warning would have fired, or the UX contradicts the prompt.
+    CHECK(BTN_HOLD_CONFIRM_TICKS < BTN_HOLD_SETUP_TICKS);
+    CHECK(BTN_HOLD_SETUP_TICKS < BTN_HOLD_ERASE_TICKS);
 }
 
 int main(void) {
-    test_short_tap_releases_before_threshold();
-    test_hold_fires_exactly_at_threshold();
-    test_hold_past_threshold_does_not_refire();
-    test_release_after_hold_fired_reports_nothing();
+    test_short_tap_reports_release();
+    test_setup_warning_fires_exactly_at_10s();
+    test_setup_warning_does_not_refire();
+    test_erase_warning_fires_exactly_at_15s();
+    test_holding_past_15s_is_quiet();
+    test_release_between_10s_and_15s_requests_setup();
+    test_release_at_or_after_15s_arms_erase();
+    test_release_resets_state_for_the_next_press();
+    test_confirm_hold_fires_exactly_at_3s();
+    test_confirm_short_press_aborts();
+    test_confirm_release_after_confirming_is_quiet();
+    test_confirm_hold_never_warns();
+    test_confirm_threshold_is_shorter_than_setup();
     if (failures) { printf("%d FAILURES\n", failures); return 1; }
     printf("ALL PASS\n");
     return 0;

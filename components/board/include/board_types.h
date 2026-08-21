@@ -11,12 +11,27 @@ typedef enum {
     BTN_VOL_UP,
     BTN_VOL_DOWN,
     BTN_EMOTION,   // tact switch: show a random emotion on the eyes
-    // Wake-only: fired by the button driver's hold-tracking (see
-    // gpio_buttons.c). A press that releases before the 10s hold threshold
-    // fires RELEASE; one that reaches the threshold fires HOLD instead
-    // (and never also fires RELEASE for that same press).
+    // Wake-only, fired by the button driver's hold-tracking (see
+    // gpio_buttons.c + button_hold_logic.h). The ladder is decided by how long
+    // the press lasted and reported when the button is LET GO, so that a 10s
+    // press can still become a 15s one:
+    //
+    //   released  <10s        -> RELEASE     (normal tap: wake/idle toggle)
+    //   released  10s..15s    -> HOLD        (enter the setup portal)
+    //   released  >=15s       -> ERASE_ARM   (ask to confirm a full wipe)
+    //
+    // The two WARN events fire at the threshold crossings while the button is
+    // still down, and exist only so the display can tell the user what letting
+    // go right now would do. They carry no action of their own.
     BTN_WAKE_RELEASE,
     BTN_WAKE_HOLD,
+    BTN_WAKE_WARN_SETUP,
+    BTN_WAKE_WARN_ERASE,
+    BTN_WAKE_ERASE_ARM,
+    // Confirm phase, entered after ERASE_ARM: a second deliberate 3s hold
+    // confirms, anything shorter cancels.
+    BTN_WAKE_ERASE_CONFIRM,
+    BTN_WAKE_CONFIRM_ABORT,
 } button_id_t;
 
 typedef struct {
@@ -89,6 +104,10 @@ typedef struct {
 
 typedef struct {
     void (*start)(void (*on_press)(button_id_t id));
+    // Switch the Wake hold-ladder into (or out of) erase-confirmation mode.
+    // Optional — may be NULL, which buttons_set_confirm_mode() treats as "this
+    // driver has no hold ladder", not as an error.
+    void (*set_confirm_mode)(bool on);
 } buttons_ops_t;
 
 // TP4056's CHRG/STDBY are mutually exclusive per its datasheet, so this is a

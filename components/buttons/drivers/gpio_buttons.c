@@ -32,8 +32,35 @@ typedef enum {
 // Hold-duration tracking, Wake-only (see btn_hold_step in button_hold_logic.h).
 // Indexed in parallel with s_gpios/s_ids; unused (and untouched) for every
 // button other than s_ids[i] == BTN_WAKE.
-static int  s_held_ticks[NBTN];
-static bool s_hold_fired[NBTN];
+static btn_hold_state_t s_hold[NBTN];
+
+// Set by buttons_set_confirm_mode() from the app's erase-confirmation prompt.
+// volatile: written from whichever task handles the button callback, read every
+// tick by buttons_task. A plain bool is atomic on both targets here, so no lock.
+static volatile bool s_confirm_mode;
+
+static void gpio_buttons_set_confirm_mode(bool on) {
+    s_confirm_mode = on;
+    // Drop any half-finished press so entering/leaving the prompt can't be
+    // credited with ticks accumulated under the other mode's thresholds.
+    for (int i = 0; i < NBTN; i++) btn_hold_reset(&s_hold[i]);
+}
+
+// Maps one hold-ladder event onto the button_id_t the app sees. Returns false
+// for events that carry no app-visible id (i.e. NONE).
+static bool hold_event_id(btn_hold_event_t ev, button_id_t *out) {
+    switch (ev) {
+    case BTN_HOLD_EVENT_RELEASE:         *out = BTN_WAKE_RELEASE;       return true;
+    case BTN_HOLD_EVENT_WARN_SETUP:      *out = BTN_WAKE_WARN_SETUP;    return true;
+    case BTN_HOLD_EVENT_WARN_ERASE:      *out = BTN_WAKE_WARN_ERASE;    return true;
+    case BTN_HOLD_EVENT_SETUP:           *out = BTN_WAKE_HOLD;          return true;
+    case BTN_HOLD_EVENT_ERASE_ARM:       *out = BTN_WAKE_ERASE_ARM;     return true;
+    case BTN_HOLD_EVENT_ERASE_CONFIRMED: *out = BTN_WAKE_ERASE_CONFIRM; return true;
+    case BTN_HOLD_EVENT_CONFIRM_ABORT:   *out = BTN_WAKE_CONFIRM_ABORT; return true;
+    case BTN_HOLD_EVENT_NONE:            return false;
+    }
+    return false;
+}
 
 static void buttons_task(void *arg) {
     (void)arg;
@@ -50,22 +77,25 @@ static void buttons_task(void *arg) {
             case BTN_ST_DEBOUNCE:
                 if (lvl == 0) {                          // still low = real press
                     ESP_LOGI(TAG, "press gpio%d", s_gpios[i]);
-                    if (s_cb) s_cb(s_ids[i]);
+                    // Press-down drives app state (barge-in, wake toggle). While
+                    // the erase prompt is up there is no app state to drive and a
+                    // stray tap must not act — the press only counts toward (or
+                    // aborts) the confirmation, which is decided on release.
+                    if (s_cb && !(s_ids[i] == BTN_WAKE && s_confirm_mode)) s_cb(s_ids[i]);
                     st[i] = BTN_ST_HELD;
-                    s_held_ticks[i] = 0;
-                    s_hold_fired[i] = false;
+                    btn_hold_reset(&s_hold[i]);
                 } else {
                     st[i] = BTN_ST_RELEASED;             // bounce — ignore
                 }
                 break;
             case BTN_ST_HELD:
                 if (s_ids[i] == BTN_WAKE) {
-                    btn_hold_event_t ev = btn_hold_step(lvl == 1, &s_held_ticks[i], &s_hold_fired[i]);
-                    if (ev == BTN_HOLD_EVENT_RELEASE) {
-                        if (s_cb) s_cb(BTN_WAKE_RELEASE);
-                    } else if (ev == BTN_HOLD_EVENT_HOLD) {
-                        ESP_LOGI(TAG, "wake held to threshold on gpio%d", s_gpios[i]);
-                        if (s_cb) s_cb(BTN_WAKE_HOLD);
+                    btn_hold_event_t ev = btn_hold_step(lvl == 1, s_confirm_mode, &s_hold[i]);
+                    button_id_t id;
+                    if (hold_event_id(ev, &id)) {
+                        if (ev != BTN_HOLD_EVENT_RELEASE)
+                            ESP_LOGI(TAG, "wake hold event %d on gpio%d", (int)ev, s_gpios[i]);
+                        if (s_cb) s_cb(id);
                     }
                 }
                 if (lvl == 1) st[i] = BTN_ST_RELEASED;
@@ -96,5 +126,6 @@ static void gpio_buttons_start(void (*on_press)(button_id_t)) {
 }
 
 const buttons_ops_t buttons_gpio_ops = {
-    .start = gpio_buttons_start,
+    .start            = gpio_buttons_start,
+    .set_confirm_mode = gpio_buttons_set_confirm_mode,
 };
