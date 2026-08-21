@@ -9,9 +9,13 @@
 
 static const char *TAG = "buttons";
 
-#define NBTN 4
+// 5 slots, not 4: the last one is a second BTN_WAKE (buttons_gpio_cfg_t.wake2).
+// Every slot carries its own debounce/hold state, so two wake buttons behave as
+// one button each rather than fighting over shared state.
+#define NBTN 5
 static int s_gpios[NBTN];  // filled from board cfg in gpio_buttons_start; <0 = absent
-static const button_id_t s_ids[NBTN]   = { BTN_WAKE, BTN_VOL_UP, BTN_VOL_DOWN, BTN_EMOTION };
+static const button_id_t s_ids[NBTN]   = { BTN_WAKE, BTN_VOL_UP, BTN_VOL_DOWN, BTN_EMOTION,
+                                           BTN_WAKE };
 
 static void (*s_cb)(button_id_t);
 
@@ -75,7 +79,7 @@ static void buttons_task(void *arg) {
 static void gpio_buttons_start(void (*on_press)(button_id_t)) {
     const buttons_gpio_cfg_t *c = (const buttons_gpio_cfg_t *)board_active()->buttons_cfg;
     s_gpios[0] = c->wake; s_gpios[1] = c->vol_up; s_gpios[2] = c->vol_down;
-    s_gpios[3] = c->emotion;
+    s_gpios[3] = c->emotion; s_gpios[4] = c->wake2;
     s_cb = on_press;
     for (int i = 0; i < NBTN; i++) {
         if (s_gpios[i] < 0) continue;   // button not present on this board

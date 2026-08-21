@@ -51,6 +51,7 @@ static const buttons_gpio_cfg_t buttons_cfg = {
     // hold it during reset/flashing.
     .wake = PIN_BTN_WAKE, .vol_up = PIN_BTN_VOL_UP,
     .vol_down = PIN_BTN_VOL_DOWN, .emotion = PIN_BTN_EMOTION,
+    .wake2 = -1,   // no second wake button on this board
 };
 
 // Display + buttons (see board_t.reserved_pins). The mic/speaker I2S pins are

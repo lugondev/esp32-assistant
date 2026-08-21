@@ -105,6 +105,10 @@ static const buttons_gpio_cfg_t buttons_cfg = {
     .vol_up   = CONFIG_AA_CUSTOM_BTN_VOL_UP,
     .vol_down = CONFIG_AA_CUSTOM_BTN_VOL_DOWN,
     .emotion  = CONFIG_AA_CUSTOM_BTN_EMOTION,
+    // No Kconfig for a second wake button yet: this board's pins are all
+    // user-configured, so the on-board-BOOT-button case wake2 exists for is
+    // already expressible as .wake.
+    .wake2    = -1,
 };
 
 LUGO_BOARD_REGISTER(board_lugo_custom) {

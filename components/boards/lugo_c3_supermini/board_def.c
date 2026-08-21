@@ -26,6 +26,7 @@ static const i2s_fd_cfg_t fd_cfg = {
 LUGO_DISPLAY_AUTO(PIN_DISP_CLK, PIN_DISP_DAT, PIN_DISP_DC, PIN_DISP_RST, -1);
 static const buttons_gpio_cfg_t buttons_cfg = {
     .wake = PIN_BTN_WAKE, .vol_up = -1, .vol_down = -1, .emotion = -1,
+    .wake2 = -1,   // no second wake button on this board
 };
 
 // Display + buttons (see board_t.reserved_pins). Mic/speaker I2S pins are

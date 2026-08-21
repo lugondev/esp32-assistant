@@ -89,6 +89,7 @@ static const display_auto_cfg_t display_cfg = {
 // and is handled over MCP / the web UI.
 static const buttons_gpio_cfg_t buttons_cfg = {
     .wake = PIN_BTN_WAKE, .vol_up = -1, .vol_down = -1, .emotion = -1,
+    .wake2 = -1,   // no second wake button on this board
 };
 
 // Display + wake button (see board_t.reserved_pins). Mic/speaker I2S pins are
