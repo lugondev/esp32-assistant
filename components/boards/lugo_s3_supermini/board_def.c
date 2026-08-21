@@ -43,15 +43,30 @@
 
 #define PIN_DISP_CLK 12    // SSD1306 SCL
 #define PIN_DISP_DAT 11    // SSD1306 SDA
-#define PIN_BTN_WAKE 13    // RTC-capable (GPIO0-21), so deep-sleep wake works.
-                           // GPIO7 carries mic WS. GPIO3 was tried first but
-                           // dropped — NOT actually dead (a full drive-test
-                           // with nothing wired to it read back healthy); the
-                           // earlier "dead" verdict was a false positive from
-                           // still having the wake wire attached during the
-                           // test. GPIO13 itself is confirmed dead by an
-                           // isolated test (wire fully disconnected, still
-                           // stuck at 0) — that one really is unusable.
+#define PIN_BTN_WAKE  3    // RTC-capable (GPIO0-21), so deep-sleep wake works.
+                           // Moved here from GPIO13, which an isolated test
+                           // (wire fully disconnected) found stuck at 0 —
+                           // unusable, and worse than useless for an
+                           // active-low button: a pin that reads 0 forever is
+                           // indistinguishable from a permanently held press,
+                           // so the driver would fire BTN_WAKE at boot and
+                           // BTN_WAKE_HOLD (setup portal) 10s later, every
+                           // boot. GPIO3 drive-tested healthy; the earlier
+                           // "GPIO3 is dead" verdict was a false positive from
+                           // leaving the wake wire attached during that test.
+                           // GPIO3 is an S3 strapping pin (JTAG source select)
+                           // but is safe as an active-low input: the internal
+                           // pull-up holds it high through reset, and it only
+                           // matters if driven at boot.
+#define PIN_BTN_BOOT  0    // On-board BOOT button, wired to GPIO0 on the module
+                           // itself (not on the header). Doubles as a second
+                           // wake button — same press/hold behaviour — so the
+                           // device stays usable without the soldered wake
+                           // wire. GPIO0 is the S3's boot-mode strapping pin:
+                           // holding it through reset enters the download
+                           // bootloader instead of the app, which is the
+                           // button's normal job and is unaffected by polling
+                           // it as an input afterwards.
 
 // GPIO4 is deliberately absent from every assignment above. Do not "reclaim" it
 // as a free pin: on the unit this board was brought up on it is shorted to
@@ -87,14 +102,17 @@ static const display_auto_cfg_t display_cfg = {
     .ssd1306 = &ssd1306_cfg, .st7789 = NULL,
 };
 
-// Only the wake button is wired; volume is handled over MCP/the web UI.
+// Only wake buttons are wired; volume is handled over MCP/the web UI. Two of
+// them: the soldered wake wire and the module's own BOOT button, both firing
+// BTN_WAKE and both hold-to-portal capable.
 static const buttons_gpio_cfg_t buttons_cfg = {
     .wake = PIN_BTN_WAKE, .vol_up = -1, .vol_down = -1, .emotion = -1,
+    .wake2 = PIN_BTN_BOOT,
 };
 
 // Display + wake button (see board_t.reserved_pins). Mic/speaker I2S pins are
 // omitted on purpose — the I2S driver reserves those itself.
-LUGO_RESERVED_PINS(PIN_DISP_CLK, PIN_DISP_DAT, PIN_BTN_WAKE);
+LUGO_RESERVED_PINS(PIN_DISP_CLK, PIN_DISP_DAT, PIN_BTN_WAKE, PIN_BTN_BOOT);
 
 LUGO_BOARD_REGISTER(board_lugo_s3_supermini) {
     .name        = "lugo-s3-supermini",
