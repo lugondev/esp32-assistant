@@ -26,6 +26,24 @@ static wifi_cfg_t s_cfg;  // working copy shown/edited by the portal
 static prov_network_t s_nets[PROV_MAX_NETWORKS];
 static int s_n_nets;
 
+// Weighted count of neighbouring APs per 2.4GHz channel, filled by
+// scan_networks() and read by provisioning_start() to place the portal's own
+// beacon somewhere it can actually be heard. Index is the channel number.
+static int s_chan_load[15];
+
+// Picks the quietest of the three non-overlapping channels. Ties go to the
+// lowest channel, which keeps the choice stable across reboots in an
+// unchanging environment rather than flapping between equally good options.
+static int quietest_channel(void) {
+    const int candidates[] = { 1, 6, 11 };
+    int best = candidates[0];
+    for (size_t i = 1; i < sizeof candidates / sizeof candidates[0]; i++) {
+        if (s_chan_load[candidates[i]] < s_chan_load[best]) best = candidates[i];
+    }
+    return best;
+}
+
+
 // Snapshot the surrounding APs while the radio is still in STA mode.
 //
 // Timing is the whole trick here: this MUST run before esp_wifi_set_mode(AP).
@@ -69,6 +87,24 @@ static void scan_networks(void) {
 
     prov_network_t *all = calloc(want, sizeof(*all));
     if (!all) { free(recs); return; }
+    // Tally what the neighbours are sitting on. The portal's AP is the weakest
+    // transmitter in the room by some margin (a bare module against mains-powered
+    // routers), so parking its beacon on top of a busy channel is the difference
+    // between "findable" and "not". Only 1/6/11 are considered: they are the
+    // non-overlapping set on 2.4GHz, and an AP squeezed between them collides
+    // with both neighbours instead of one.
+    memset(s_chan_load, 0, sizeof s_chan_load);
+    for (uint16_t i = 0; i < want; i++) {
+        int ch = recs[i].primary;
+        if (ch >= 1 && ch <= 14) {
+            // Weight by how loud it is: a strong neighbour drowns the beacon,
+            // a distant one barely matters.
+            s_chan_load[ch] += (recs[i].rssi > -60) ? 3 : 1;
+        }
+    }
+    ESP_LOGI(TAG, "channel load (weighted): ch1=%d ch6=%d ch11=%d",
+             s_chan_load[1], s_chan_load[6], s_chan_load[11]);
+
     for (uint16_t i = 0; i < want; i++) {
         snprintf(all[i].ssid, sizeof all[i].ssid, "%s", (const char *)recs[i].ssid);
         all[i].rssi = recs[i].rssi;
@@ -217,6 +253,15 @@ static esp_err_t save_post_handler(httpd_req_t *req) {
     return ESP_OK;  // unreachable
 }
 
+// The portal's own screen text, kept so anything that overwrites the panel
+// (today: the erase-confirmation prompt, which can be triggered from the button
+// task while the portal is up) can put it back. Empty until the portal starts.
+static char s_status_line[64];
+
+void provisioning_redraw_status(void) {
+    if (s_status_line[0]) display_show("Setup WiFi", s_status_line);
+}
+
 void provisioning_start(const wifi_cfg_t *current) {
     s_cfg = *current;
 
@@ -244,7 +289,7 @@ void provisioning_start(const wifi_cfg_t *current) {
     wifi_config_t ap_config = { 0 };
     snprintf((char *)ap_config.ap.ssid, sizeof(ap_config.ap.ssid), "%s", ssid);
     ap_config.ap.ssid_len = strlen(ssid);
-    ap_config.ap.channel = 1;
+    ap_config.ap.channel = quietest_channel();
     ap_config.ap.max_connection = 4;
     ap_config.ap.authmode = WIFI_AUTH_OPEN;
 
@@ -259,9 +304,30 @@ void provisioning_start(const wifi_cfg_t *current) {
     ESP_ERROR_CHECK(esp_wifi_start());
     ESP_LOGI(TAG, "provisioning AP '%s' up at 192.168.9.1", ssid);
 
-    char ssid_ip[64];
-    snprintf(ssid_ip, sizeof ssid_ip, "%s 192.168.9.1", ssid);
-    display_show("Setup WiFi", ssid_ip);
+    // Read the radio's own view of the AP back, rather than trusting the config
+    // that was just written. "softAP mode entered, beacon buffers allocated, no
+    // error anywhere, and still nothing scans it" is not diagnosable from the
+    // write side — this prints what the driver actually committed.
+    {
+        wifi_mode_t mode = WIFI_MODE_NULL;
+        wifi_config_t got = { 0 };
+        uint8_t prim = 0;
+        wifi_second_chan_t sec = WIFI_SECOND_CHAN_NONE;
+        int8_t txpower = 0;
+        esp_wifi_get_mode(&mode);
+        esp_wifi_get_config(WIFI_IF_AP, &got);
+        esp_wifi_get_channel(&prim, &sec);
+        esp_wifi_get_max_tx_power(&txpower);
+        ESP_LOGI(TAG, "AP readback: mode=%d ssid='%s' ssid_len=%d hidden=%d "
+                      "chan=%d(cfg %d) auth=%d max_conn=%d beacon_ms=%d txpwr=%d",
+                 (int)mode, (const char *)got.ap.ssid, (int)got.ap.ssid_len,
+                 (int)got.ap.ssid_hidden, (int)prim, (int)got.ap.channel,
+                 (int)got.ap.authmode, (int)got.ap.max_connection,
+                 (int)got.ap.beacon_interval, (int)txpower);
+    }
+
+    snprintf(s_status_line, sizeof s_status_line, "%s 192.168.9.1", ssid);
+    display_show("Setup WiFi", s_status_line);
     voice_play(VOICE_SETUP);
 
     xTaskCreate(dns_task, "prov_dns", 4096, NULL, 5, NULL);
