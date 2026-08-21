@@ -20,20 +20,38 @@
 // broken-out pin (2/3/5/8/9/10/11/13/43) drives both ways cleanly. Whatever
 // lands on GPIO4 reads as a permanent logic 0: as mic SD that was a dead data
 // line, as mic WS the mic never got a word-select and emitted nothing.
-#define PIN_MIC_WS    8    // INMP441 WS   (was 4 — dead pin)
-#define PIN_MIC_SCK   5    // INMP441 SCK  (I2S BCLK)
-#define PIN_MIC_SD    6    // INMP441 SD   (I2S data-in)
+#define PIN_MIC_WS    7    // INMP441 WS   (was 4 — dead pin)
+#define PIN_MIC_SCK   6    // INMP441 SCK  (I2S BCLK)
+#define PIN_MIC_SD    5    // INMP441 SD   (I2S data-in). Health-scan readings
+                           // on this line have flip-flopped between GPIO5 and
+                           // GPIO10 (OK on one boot, DEAD/STUCK the next) —
+                           // points at a marginal solder joint on the SD wire
+                           // itself, not either ESP32 pin. Back on GPIO5 while
+                           // re-testing.
 
 #define PIN_SPK_LRC   1    // MAX98357A LRC (I2S WS)
 #define PIN_SPK_BCLK 44    // MAX98357A BCLK — the header pin silkscreened "RX"
-                           // (UART0 RX). Safe because the console runs on the
-                           // native USB-Serial-JTAG, not UART0; the ROM leaves
-                           // this pin an input at boot, then I2S drives it.
-#define PIN_SPK_DIN  12    // MAX98357A DIN (I2S data-out)
+                           // (UART0 RX). Was recorded as GPIO43 (TX) from an
+                           // earlier verbal description, but a continuity
+                           // check with a multimeter found BCLK actually
+                           // landed on the RX-labeled pin — a one-pin-over
+                           // mixup that meant the amp never saw a bit clock
+                           // at all despite VIN/SD/GAIN/GND all measuring
+                           // correct. Safe because the console runs on the
+                           // native USB-Serial-JTAG, not UART0.
+#define PIN_SPK_DIN   2    // MAX98357A DIN (I2S data-out)
 
-#define PIN_DISP_CLK  2    // SSD1306 SCL
-#define PIN_DISP_DAT 13    // SSD1306 SDA
-#define PIN_BTN_WAKE  7    // RTC-capable (GPIO0-21), so deep-sleep wake works
+#define PIN_DISP_CLK 12    // SSD1306 SCL
+#define PIN_DISP_DAT 11    // SSD1306 SDA
+#define PIN_BTN_WAKE 13    // RTC-capable (GPIO0-21), so deep-sleep wake works.
+                           // GPIO7 carries mic WS. GPIO3 was tried first but
+                           // dropped — NOT actually dead (a full drive-test
+                           // with nothing wired to it read back healthy); the
+                           // earlier "dead" verdict was a false positive from
+                           // still having the wake wire attached during the
+                           // test. GPIO13 itself is confirmed dead by an
+                           // isolated test (wire fully disconnected, still
+                           // stuck at 0) — that one really is unusable.
 
 // GPIO4 is deliberately absent from every assignment above. Do not "reclaim" it
 // as a free pin: on the unit this board was brought up on it is shorted to
@@ -45,11 +63,13 @@
 // I2S_NUM_1. No clock fan-out needed (that is the single-I2S C3's problem).
 static const i2s_mic_cfg_t mic_cfg = {
     .port = 0, .ws = PIN_MIC_WS, .sck = PIN_MIC_SCK, .sd = PIN_MIC_SD,
-    // This board's INMP441 has L/R tied HIGH, so it drives the right slot —
-    // measured, not assumed: a stereo capture on the data pin read |L|max=0
-    // with |R|max=0x01a78400. The other boards wire L/R to GND and leave this
-    // false. Tie L/R to GND and drop this line if the module is ever rewired.
-    .right_slot = true,
+    // Originally documented as L/R tied HIGH (right slot) on this unit's first
+    // bring-up. Re-checked during a later debug session: L/R is actually wired
+    // to GND (confirmed by the person holding the board), which drives the
+    // LEFT slot instead — matching every other board here. mic meter read a
+    // flat peak=0 the whole time .right_slot was true, exactly the symptom of
+    // reading the silent slot while real audio sits in the other one.
+    .right_slot = false,
 };
 static const i2s_speaker_cfg_t spk_cfg = {
     .port = 1, .bclk = PIN_SPK_BCLK, .lrc = PIN_SPK_LRC, .din = PIN_SPK_DIN,
@@ -72,7 +92,7 @@ static const buttons_gpio_cfg_t buttons_cfg = {
     .wake = PIN_BTN_WAKE, .vol_up = -1, .vol_down = -1, .emotion = -1,
 };
 
-// Display + buttons (see board_t.reserved_pins). Mic/speaker I2S pins are
+// Display + wake button (see board_t.reserved_pins). Mic/speaker I2S pins are
 // omitted on purpose — the I2S driver reserves those itself.
 LUGO_RESERVED_PINS(PIN_DISP_CLK, PIN_DISP_DAT, PIN_BTN_WAKE);
 
